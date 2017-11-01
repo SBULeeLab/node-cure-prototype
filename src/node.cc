@@ -879,6 +879,99 @@ const char *signo_string(int signo) {
   }
 }
 
+/* TODO This should be in src/node_watchdog. */
+class NodeCureWatchdog;
+typedef struct ncw_arg_s {
+	NodeCureWatchdog *ncw;
+	uv_sem_t ready;
+} ncw_arg_t;
+
+/* Singleton class. node.cc has the only copy. */
+class NodeCureWatchdog { // NodeCureWatchdog (NCW). Times are in ms.
+	public:
+		NodeCureWatchdog ();
+
+		/* Event Loop thread tells NCW to start the countdown. */
+	  void StartCountdown (long timeout);
+
+		/* Event Loop thread tells NCW to disable this countdown. */
+		void Rest ();
+
+		/* If there is an active countdown, report how long it was for.
+		 * Otherwise returns -1.
+		 */
+		long GetCountdownTimeout ();
+
+		/* If there is an active countdown, report the time remaining.
+		 * Otherwise returns -1.
+		 */
+		long GetCountdownRemaining ();
+
+		/* Returns true if there is an active countdown and it has expired. */
+		bool HasCountdownExpired ();
+
+		/* An NCW is possessed by a thread.
+		 * The possessing thread responds synchronously to the public APIs.
+		 * The possessing thread remains until it is Kill'd.
+		 *
+		 * Call this to be the possessor. The possessor never returns from this function.
+		 */
+		void Possess (ncw_arg_t *arg);
+
+		/* Kill and join this NCW's possessor. */
+		void Kill ();
+
+	private:
+		bool possessed;
+		bool expired;
+		uv_thread_t tid;
+};
+
+/* NodeCureWatchdog. */
+NodeCureWatchdog::NodeCureWatchdog () {
+	/* Enforce singleton status. */
+	static bool isSingleton = true;
+	CHECK_EQ(isSingleton, true);
+	isSingleton = false;
+
+	possessed = false;
+	expired = false;
+}
+
+void NodeCureWatchdog::StartCountdown(long timeout) {
+}
+
+void NodeCureWatchdog::Rest() {
+}
+
+long NodeCureWatchdog::GetCountdownTimeout() {
+	return -1;
+}
+
+long NodeCureWatchdog::GetCountdownRemaining() {
+	return -1;
+}
+
+bool NodeCureWatchdog::HasCountdownExpired () {
+	return expired;
+}
+
+void NodeCureWatchdog::Possess(ncw_arg_t *wd_arg) {
+	CHECK_EQ(possessed, false);
+
+	expired = false;
+
+	tid = uv_thread_self();
+	possessed = true;
+
+	uv_sem_post(&wd_arg->ready);
+
+	while (1);
+}
+
+void NodeCureWatchdog::Kill() {
+}
+
 
 Local<Value> ErrnoException(Isolate* isolate,
                             int errorno,
@@ -1286,7 +1379,6 @@ void SetupDomainUse(const FunctionCallbackInfo<Value>& args) {
 void RunMicrotasks(const FunctionCallbackInfo<Value>& args) {
   args.GetIsolate()->RunMicrotasks();
 }
-
 
 void SetupProcessObject(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
@@ -2550,6 +2642,55 @@ static void Hrtime(const FunctionCallbackInfo<Value>& args) {
   fields[2] = t % NANOS_PER_SEC;
 }
 
+/* Singleton instance. */
+NodeCureWatchdog *ncw = new NodeCureWatchdog();
+
+static void PossessTheNodeCureWatchdog(void *arg) {
+	PrintErrorString("PossessTheNodeCureWatchdog\n");
+
+	ncw_arg_t *wd_arg = (ncw_arg_t *) arg;
+	CHECK_EQ(wd_arg->ncw, ncw);
+	wd_arg->ncw->Possess(wd_arg);
+	UNREACHABLE();
+}
+
+void InitializeNodeCureWatchdog() {
+	PrintErrorString("Initializing watchdog\n");
+
+	/* Create a possessor for the NodeCureWatchdog. */ 
+	uv_thread_t wd_thr;
+
+	ncw_arg_t wd_arg;
+	wd_arg.ncw = ncw;
+	CHECK_EQ(uv_sem_init(&wd_arg.ready, 0), 0);
+	int create = uv_thread_create(&wd_thr, PossessTheNodeCureWatchdog, &wd_arg);
+	CHECK_EQ(create, 0);
+
+	PrintErrorString("InitializeNodeCureWatchdog: waiting for ncw to be ready\n");
+	uv_sem_wait(&wd_arg.ready);
+	PrintErrorString("InitializeNodeCureWatchdog: ncw is ready, returning\n");
+
+	return;
+}
+
+
+static void NodeCureWatchdogStart(const FunctionCallbackInfo<Value>& args) {
+	PrintErrorString("NodeCureWatchdogStart: Hello!\n");
+	ncw->StartCountdown(5); // TODO
+}
+
+static void NodeCureWatchdogExpired(const FunctionCallbackInfo<Value>& args) {
+	PrintErrorString("NodeCureWatchdogExpired: Hello!\n");
+  Environment* env = Environment::GetCurrent(args.GetIsolate());
+	args.GetReturnValue().Set(Boolean::New(env->isolate(), ncw->HasCountdownExpired()));
+}
+
+
+static void NodeCureWatchdogStop(const FunctionCallbackInfo<Value>& args) {
+	PrintErrorString("NodeCureWatchdogStop: Hello!\n");
+	ncw->Rest();
+}
+
 // Microseconds in a second, as a float, used in CPUUsage() below
 #define MICROS_PER_SEC 1e6
 
@@ -3685,6 +3826,10 @@ void SetupProcessObject(Environment* env,
   env->SetMethod(process, "_debugEnd", DebugEnd);
 
   env->SetMethod(process, "hrtime", Hrtime);
+
+  env->SetMethod(process, "_watchdogStart", NodeCureWatchdogStart);
+  env->SetMethod(process, "_watchdogExpired", NodeCureWatchdogExpired);
+  env->SetMethod(process, "_watchdogStop", NodeCureWatchdogStop);
 
   env->SetMethod(process, "cpuUsage", CPUUsage);
 

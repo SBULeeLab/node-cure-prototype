@@ -174,6 +174,8 @@ void ProcessEmitWarning(Environment* env, const char* fmt, ...);
 
 void FillStatsArray(double* fields, const uv_stat_t* s);
 
+void InitializeNodeCureWatchdog();
+
 void SetupProcessObject(Environment* env,
                         int argc,
                         const char* const* argv,

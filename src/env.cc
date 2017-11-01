@@ -90,6 +90,8 @@ void Environment::Start(int argc,
       process_template->GetFunction()->NewInstance(context()).ToLocalChecked();
   set_process_object(process_object);
 
+	InitializeNodeCureWatchdog();
+
   SetupProcessObject(this, argc, argv, exec_argc, exec_argv);
   LoadAsyncWrapperInfo(this);
 }
