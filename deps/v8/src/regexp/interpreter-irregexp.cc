@@ -161,7 +161,7 @@ static RegExpImpl::IrregexpResult RawMatch(Isolate* isolate,
                                            uint32_t current_char,
 																					 int timeout) {
 	unsigned start = (unsigned) time(NULL);
-	int check_interval = 100;
+	int check_interval = 1000;
 
   const byte* pc = code_base;
   // BacktrackStack ensures that the memory allocated for the backtracking stack
@@ -182,9 +182,11 @@ static RegExpImpl::IrregexpResult RawMatch(Isolate* isolate,
 
 		since_interval++;
 		if (check_interval < since_interval) {
+			since_interval = 0;
+
 			unsigned now = (unsigned) time(NULL);
 			unsigned sinceStart = now - start;
-			if (timeout < sinceStart) {
+			if (0 < timeout && (unsigned) timeout < sinceStart) {
 				dprintf(2, "RegExpImpl::IrregexpResult: TIMED OUT\n");
 				return RegExpImpl::RE_TIMEOUT;
 			}
