@@ -62,7 +62,7 @@ declare_args() {
 
   # Interpreted regexp engine exists as platform-independent alternative
   # based where the regular expression is compiled to a bytecode.
-  v8_interpreted_regexp = false
+  v8_interpreted_regexp = true
 
   # Sets -dOBJECT_PRINT.
   v8_enable_object_print = ""
