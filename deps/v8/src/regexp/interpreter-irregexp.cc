@@ -20,6 +20,8 @@
 #include "unicode/uchar.h"
 #endif  // V8_INTL_SUPPORT
 
+#include <time.h>
+
 namespace v8 {
 namespace internal {
 
@@ -156,7 +158,11 @@ static RegExpImpl::IrregexpResult RawMatch(Isolate* isolate,
                                            Vector<const Char> subject,
                                            int* registers,
                                            int current,
-                                           uint32_t current_char) {
+                                           uint32_t current_char,
+																					 int timeout) {
+	unsigned start = (unsigned) time(NULL);
+	int check_interval = 100;
+
   const byte* pc = code_base;
   // BacktrackStack ensures that the memory allocated for the backtracking stack
   // is returned to the system or cached if there is no stack being cached at
@@ -170,8 +176,20 @@ static RegExpImpl::IrregexpResult RawMatch(Isolate* isolate,
     PrintF("\n\nStart bytecode interpreter\n\n");
   }
 #endif
+	int since_interval = 0;
   while (true) {
     int32_t insn = Load32Aligned(pc);
+
+		since_interval++;
+		if (check_interval < since_interval) {
+			unsigned now = (unsigned) time(NULL);
+			unsigned sinceStart = now - start;
+			if (timeout < sinceStart) {
+				dprintf(2, "RegExpImpl::IrregexpResult: TIMED OUT\n");
+				return RegExpImpl::RE_TIMEOUT;
+			}
+		}
+
     switch (insn & BYTECODE_MASK) {
       BYTECODE(BREAK)
         UNREACHABLE();
@@ -590,7 +608,8 @@ RegExpImpl::IrregexpResult IrregexpInterpreter::Match(
     Handle<ByteArray> code_array,
     Handle<String> subject,
     int* registers,
-    int start_position) {
+    int start_position,
+		int timeout) {
   DCHECK(subject->IsFlat());
 
   DisallowHeapAllocation no_gc;
@@ -605,7 +624,8 @@ RegExpImpl::IrregexpResult IrregexpInterpreter::Match(
                     subject_vector,
                     registers,
                     start_position,
-                    previous_char);
+                    previous_char,
+										timeout);
   } else {
     DCHECK(subject_content.IsTwoByte());
     Vector<const uc16> subject_vector = subject_content.ToUC16Vector();
@@ -615,7 +635,8 @@ RegExpImpl::IrregexpResult IrregexpInterpreter::Match(
                     subject_vector,
                     registers,
                     start_position,
-                    previous_char);
+                    previous_char,
+										timeout);
   }
 }
 

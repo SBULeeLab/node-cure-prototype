@@ -73,7 +73,7 @@ class RegExpImpl {
                                  Handle<String> subject, int index,
                                  Handle<RegExpMatchInfo> last_match_info);
 
-  enum IrregexpResult { RE_FAILURE = 0, RE_SUCCESS = 1, RE_EXCEPTION = -1 };
+  enum IrregexpResult { RE_FAILURE = 0, RE_SUCCESS = 1, RE_TIMEOUT = 2, RE_EXCEPTION = -1 };
 
   // Prepare a RegExp for being executed one or more times (using
   // IrregexpExecOnce) on the subject.
@@ -91,6 +91,7 @@ class RegExpImpl {
   // The captures and subcaptures are stored into the registers vector.
   // If matching fails, returns RE_FAILURE.
   // If execution fails, sets a pending exception and returns RE_EXCEPTION.
+	// If execution times out, sets a pending exception and returns RE_TIMEOUT.
   static int IrregexpExecRaw(Handle<JSRegExp> regexp,
                              Handle<String> subject,
                              int index,

@@ -20,7 +20,8 @@ class IrregexpInterpreter {
                                           Handle<ByteArray> code,
                                           Handle<String> subject,
                                           int* captures,
-                                          int start_position);
+                                          int start_position,
+																					int timeout);
 };
 
 

@@ -447,12 +447,23 @@ int RegExpImpl::IrregexpPrepare(Handle<JSRegExp> regexp,
 #endif  // V8_INTERPRETED_REGEXP
 }
 
+int irregexpTimeout = -1;
+int IRREGEXP_TIMEOUT = 5;
 
 int RegExpImpl::IrregexpExecRaw(Handle<JSRegExp> regexp,
                                 Handle<String> subject,
                                 int index,
                                 int32_t* output,
                                 int output_size) {
+	if (irregexpTimeout == -1) {
+		char *V8_IRREGEXP_TIMEOUT = getenv("NODECURE_V8_IRREGEXP_TIMEOUT");
+		if (V8_IRREGEXP_TIMEOUT == NULL)
+			irregexpTimeout = IRREGEXP_TIMEOUT;
+		else
+			irregexpTimeout = atoi(V8_IRREGEXP_TIMEOUT);
+		dprintf(2, "irregexpTimeout %d\n", irregexpTimeout);
+	}
+
   Isolate* isolate = regexp->GetIsolate();
 
   Handle<FixedArray> irregexp(FixedArray::cast(regexp->data()), isolate);
@@ -521,14 +532,26 @@ int RegExpImpl::IrregexpExecRaw(Handle<JSRegExp> regexp,
                                                      byte_codes,
                                                      subject,
                                                      raw_output,
-                                                     index);
-  if (result == RE_SUCCESS) {
-    // Copy capture results to the start of the registers array.
-    MemCopy(output, raw_output, number_of_capture_registers * sizeof(int32_t));
-  }
-  if (result == RE_EXCEPTION) {
-    DCHECK(!isolate->has_pending_exception());
-    isolate->StackOverflow();
+                                                     index,
+																										 irregexpTimeout);
+	switch (result) {
+		case RE_SUCCESS:
+			// Copy capture results to the start of the registers array.
+			MemCopy(output, raw_output, number_of_capture_registers * sizeof(int32_t));
+			break;
+		case RE_TIMEOUT:
+			// Throw an exception.
+			dprintf(2, "Irregexp match timed out!\n");
+			isolate->Throw(*isolate->factory()->NewTimeoutError(MessageTemplate::kTimeoutError));
+//			"Regexp timeout"
+			break;
+		case RE_EXCEPTION:
+			DCHECK(!isolate->has_pending_exception());
+			isolate->StackOverflow();
+			break;
+		case RE_FAILURE:
+			dprintf(2, "UNEXPECETED ERROR\n");
+			break;
   }
   return result;
 #endif  // V8_INTERPRETED_REGEXP
@@ -574,7 +597,7 @@ MaybeHandle<Object> RegExpImpl::IrregexpExec(
     return SetLastMatchInfo(
         last_match_info, subject, capture_count, output_registers);
   }
-  if (res == RE_EXCEPTION) {
+  if (res == RE_EXCEPTION || res == RE_TIMEOUT) {
     DCHECK(isolate->has_pending_exception());
     return MaybeHandle<Object>();
   }
