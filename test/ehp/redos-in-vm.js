@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /*
  * Load the redos.js file and execute it in a VM context.
  *

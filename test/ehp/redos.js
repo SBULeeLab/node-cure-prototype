@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /* Node regexp match will run to completion by default.
  * With NodeCure it will throw an exception.
  */
