@@ -637,6 +637,7 @@ bool BuiltinHasNoSideEffect(Builtins::Name id) {
     case Builtins::kGlobalIsNaN:
     // Error builtins.
     case Builtins::kMakeError:
+    case Builtins::kMakeTimeoutError:
     case Builtins::kMakeTypeError:
     case Builtins::kMakeSyntaxError:
     case Builtins::kMakeRangeError:

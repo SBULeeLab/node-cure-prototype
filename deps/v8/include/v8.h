@@ -6047,6 +6047,7 @@ class V8_EXPORT Exception {
   static Local<Value> RangeError(Local<String> message);
   static Local<Value> ReferenceError(Local<String> message);
   static Local<Value> SyntaxError(Local<String> message);
+  static Local<Value> TimeoutError(Local<String> message);
   static Local<Value> TypeError(Local<String> message);
   static Local<Value> Error(Local<String> message);
 

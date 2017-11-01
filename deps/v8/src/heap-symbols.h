@@ -183,6 +183,7 @@
   V(toJSON_string, "toJSON")                                       \
   V(toString_string, "toString")                                   \
   V(true_string, "true")                                           \
+  V(TimeoutError_string, "TimeoutError")                           \
   V(TypeError_string, "TypeError")                                 \
   V(type_string, "type")                                           \
   V(CompileError_string, "CompileError")                           \

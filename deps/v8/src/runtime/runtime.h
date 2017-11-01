@@ -297,6 +297,7 @@ namespace internal {
   F(IS_VAR, 1, 1)                                                    \
   F(NewReferenceError, 2, 1)                                         \
   F(NewSyntaxError, 2, 1)                                            \
+  F(NewTimeoutError, 2, 1)                                           \
   F(NewTypeError, 2, 1)                                              \
   F(OrdinaryHasInstance, 2, 1)                                       \
   F(PromoteScheduledException, 0, 1)                                 \
@@ -326,6 +327,7 @@ namespace internal {
   F(ThrowReferenceError, 1, 1)                                       \
   F(ThrowStackOverflow, 0, 1)                                        \
   F(ThrowSymbolAsyncIteratorInvalid, 0, 1)                           \
+  F(ThrowTimeoutError, -1 /* >= 1 */, 1)                             \
   F(ThrowTypeError, -1 /* >= 1 */, 1)                                \
   F(ThrowUndefinedOrNullToObject, 1, 1)                              \
   F(Typeof, 1, 1)                                                    \

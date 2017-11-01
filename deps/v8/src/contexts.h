@@ -47,6 +47,7 @@ enum ContextLookupFlags {
   V(MAKE_ERROR_INDEX, JSFunction, make_error)                               \
   V(MAKE_RANGE_ERROR_INDEX, JSFunction, make_range_error)                   \
   V(MAKE_SYNTAX_ERROR_INDEX, JSFunction, make_syntax_error)                 \
+  V(MAKE_TIMEOUT_ERROR_INDEX, JSFunction, make_timeout_error)               \
   V(MAKE_TYPE_ERROR_INDEX, JSFunction, make_type_error)                     \
   V(MAKE_URI_ERROR_INDEX, JSFunction, make_uri_error)                       \
   V(OBJECT_CREATE, JSFunction, object_create)                               \
@@ -118,6 +119,7 @@ enum ContextLookupFlags {
   V(SET_DELETE_INDEX, JSFunction, set_delete)                             \
   V(SET_HAS_INDEX, JSFunction, set_has)                                   \
   V(SYNTAX_ERROR_FUNCTION_INDEX, JSFunction, syntax_error_function)       \
+  V(TIMEOUT_ERROR_FUNCTION_INDEX, JSFunction, timeout_error_function)     \
   V(TYPE_ERROR_FUNCTION_INDEX, JSFunction, type_error_function)           \
   V(URI_ERROR_FUNCTION_INDEX, JSFunction, uri_error_function)             \
   V(WASM_COMPILE_ERROR_FUNCTION_INDEX, JSFunction,                        \

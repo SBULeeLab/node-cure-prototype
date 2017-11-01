@@ -117,6 +117,11 @@ BUILTIN(MakeSyntaxError) {
   return MakeGenericError(isolate, args, isolate->syntax_error_function());
 }
 
+BUILTIN(MakeTimeoutError) {
+  HandleScope scope(isolate);
+  return MakeGenericError(isolate, args, isolate->timeout_error_function());
+}
+
 BUILTIN(MakeTypeError) {
   HandleScope scope(isolate);
   return MakeGenericError(isolate, args, isolate->type_error_function());

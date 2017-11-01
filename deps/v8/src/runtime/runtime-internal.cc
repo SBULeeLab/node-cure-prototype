@@ -109,6 +109,10 @@ RUNTIME_FUNCTION(Runtime_ThrowRangeError) {
   THROW_ERROR(isolate, args, NewRangeError);
 }
 
+RUNTIME_FUNCTION(Runtime_ThrowTimeoutError) {
+  THROW_ERROR(isolate, args, NewTimeoutError);
+}
+
 RUNTIME_FUNCTION(Runtime_ThrowTypeError) {
   THROW_ERROR(isolate, args, NewTypeError);
 }
@@ -173,6 +177,16 @@ RUNTIME_FUNCTION(Runtime_ThrowReferenceError) {
   CONVERT_ARG_HANDLE_CHECKED(Object, name, 0);
   THROW_NEW_ERROR_RETURN_FAILURE(
       isolate, NewReferenceError(MessageTemplate::kNotDefined, name));
+}
+
+RUNTIME_FUNCTION(Runtime_NewTimeoutError) {
+  HandleScope scope(isolate);
+  DCHECK_EQ(2, args.length());
+  CONVERT_INT32_ARG_CHECKED(template_index, 0);
+  CONVERT_ARG_HANDLE_CHECKED(Object, arg0, 1);
+  auto message_template =
+      static_cast<MessageTemplate::Template>(template_index);
+  return *isolate->factory()->NewTimeoutError(message_template, arg0);
 }
 
 RUNTIME_FUNCTION(Runtime_NewTypeError) {

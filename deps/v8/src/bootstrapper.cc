@@ -2499,6 +2499,13 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
                      Context::MAKE_SYNTAX_ERROR_INDEX);
   }
 
+  {  // -- T i m e o u t E r r o r
+    InstallError(isolate, global, factory->TimeoutError_string(),
+                 Context::TIMEOUT_ERROR_FUNCTION_INDEX);
+    InstallMakeError(isolate, builtins->MakeTimeoutError(),
+                     Context::MAKE_TIMEOUT_ERROR_INDEX);
+  }
+
   {  // -- T y p e E r r o r
     InstallError(isolate, global, factory->TypeError_string(),
                  Context::TYPE_ERROR_FUNCTION_INDEX);

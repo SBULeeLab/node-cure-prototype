@@ -711,7 +711,8 @@ class ErrorUtils : public AllStatic {
   T(DataCloneDeserializationError, "Unable to deserialize cloned data.")       \
   T(DataCloneDeserializationVersionError,                                      \
     "Unable to deserialize cloned data due to invalid or unsupported "         \
-    "version.")
+    "version.")                                                                \
+	T(TimeoutError, "Timed out")
 
 class MessageTemplate {
  public:

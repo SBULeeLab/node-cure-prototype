@@ -728,6 +728,7 @@ class RuntimeCallTimer final {
   V(SymbolObject_SymbolValue)                              \
   V(SyntaxError_New)                                       \
   V(TryCatch_StackTrace)                                   \
+  V(TimeoutError_New)                                      \
   V(TypeError_New)                                         \
   V(Uint16Array_New)                                       \
   V(Uint32Array_New)                                       \

@@ -506,6 +506,7 @@ namespace internal {
   CPP(MakeError)                                                               \
   CPP(MakeRangeError)                                                          \
   CPP(MakeSyntaxError)                                                         \
+  CPP(MakeTimeoutError)                                                        \
   CPP(MakeTypeError)                                                           \
   CPP(MakeURIError)                                                            \
                                                                                \
