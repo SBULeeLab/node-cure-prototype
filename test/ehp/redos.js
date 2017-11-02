@@ -8,6 +8,7 @@ for (var i = 0; i < len; i++)
 	str += 'a';
 str += '!'; // mismatch
 
+var ret = '';
 try {
 	console.log('Performing match with str len ' + str.length);
 	if (str.match(/(a+)+$/)) {
@@ -19,4 +20,7 @@ try {
 } catch (e) {
 	console.log('Caught exception:');
 	console.log(e);
+	ret = e;
 }
+
+ret; // If run from a VM, this is the return value.

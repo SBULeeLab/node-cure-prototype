@@ -25,7 +25,8 @@ var start = process.hrtime();
 try {
 	console.log('Running code in a context');
 	console.log(code);
-	vm.runInContext(code, ctxt, { timeout: 1000 });
+	var ret = vm.runInContext(code, ctxt, { timeout: 1000 });
+	console.log('vm returned: ' + ret);
 } catch (e) {
 	console.log('vm threw after ' + process.hrtime(start));
 	console.log(e);
