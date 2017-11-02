@@ -695,7 +695,7 @@ void V8DebuggerAgentImpl::schedulePauseOnNextStatement(
   if (m_breakReason.empty()) {
     m_debugger->setPauseOnNextStatement(true, m_session->contextGroupId());
   }
-  pushBreakDetails(breakReason, std::move(data));
+  pushBreakDetails(breakReason, std::move(data)); // Add another reason to m_breakReason.
 }
 
 void V8DebuggerAgentImpl::cancelPauseOnNextStatement() {

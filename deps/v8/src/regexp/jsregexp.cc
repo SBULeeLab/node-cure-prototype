@@ -534,6 +534,14 @@ int RegExpImpl::IrregexpExecRaw(Handle<JSRegExp> regexp,
                                                      raw_output,
                                                      index,
 																										 irregexpTimeout);
+
+	if (result == RE_TIMEOUT) {
+		dprintf(2, "RegExpImpl::IrregexpExecRaw: Throwing a TimeoutError\n");
+		isolate->Throw(*isolate->factory()->NewTimeoutError(MessageTemplate::kTimeoutError));
+		dprintf(2, "RegExpImpl::IrregexpExecRaw: pending_exception IsJSError: %d\n", isolate->pending_exception()->IsJSError());
+		return result;
+	}
+
 	switch (result) {
 		case RE_SUCCESS:
 			// Copy capture results to the start of the registers array.
@@ -541,16 +549,16 @@ int RegExpImpl::IrregexpExecRaw(Handle<JSRegExp> regexp,
 			break;
 		case RE_TIMEOUT:
 			// Throw an exception.
-			dprintf(2, "Irregexp match timed out!\n");
-			isolate->Throw(*isolate->factory()->NewTimeoutError(MessageTemplate::kTimeoutError));
-//			"Regexp timeout"
+			dprintf(2, "Irregexp match timed out below me\n");
+			//isolate->Throw(*isolate->factory()->NewTimeoutError(MessageTemplate::kTimeoutError));
 			break;
 		case RE_EXCEPTION:
 			DCHECK(!isolate->has_pending_exception());
+			// TODO Differentiate type of exception: timeout vs. non-timeout.
+			//Object *exception = isolate->pending_exception();
 			isolate->StackOverflow();
 			break;
 		case RE_FAILURE:
-			dprintf(2, "UNEXPECETED ERROR\n");
 			break;
   }
   return result;
