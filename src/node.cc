@@ -883,6 +883,7 @@ const char *signo_string(int signo) {
 class NodeCureWatchdog;
 typedef struct ncw_arg_s {
 	NodeCureWatchdog *ncw;
+	v8::Isolate *isolate;
 	uv_sem_t ready;
 } ncw_arg_t;
 
@@ -921,10 +922,14 @@ class NodeCureWatchdog { // NodeCureWatchdog (NCW). Times are in ms.
 		/* Kill and join this NCW's possessor. */
 		void Kill ();
 
+		v8::Isolate * isolate() { return isolate_; }
+
 	private:
-		bool possessed;
-		bool expired;
-		uv_thread_t tid;
+		v8::Isolate *isolate_;
+
+		bool possessed_;
+		bool expired_;
+		uv_thread_t tid_;
 };
 
 /* NodeCureWatchdog. */
@@ -934,8 +939,10 @@ NodeCureWatchdog::NodeCureWatchdog () {
 	CHECK_EQ(isSingleton, true);
 	isSingleton = false;
 
-	possessed = false;
-	expired = false;
+	isolate_ = NULL;
+
+	possessed_ = false;
+	expired_ = false;
 }
 
 void NodeCureWatchdog::StartCountdown(long timeout) {
@@ -953,18 +960,23 @@ long NodeCureWatchdog::GetCountdownRemaining() {
 }
 
 bool NodeCureWatchdog::HasCountdownExpired () {
-	return expired;
+	return expired_;
 }
 
 void NodeCureWatchdog::Possess(ncw_arg_t *wd_arg) {
-	CHECK_EQ(possessed, false);
+	CHECK_EQ(possessed_, false);
 
-	expired = false;
+	expired_ = false;
 
-	tid = uv_thread_self();
-	possessed = true;
+	isolate_ = wd_arg->isolate;
+	tid_ = uv_thread_self();
+	possessed_ = true;
 
 	uv_sem_post(&wd_arg->ready);
+
+	sleep(1);
+	PrintErrorString("NodeCureWatchdog::Possess: Triggering a timeout after 1 second\n");
+	isolate_->Timeout();
 
 	while (1);
 }
@@ -2651,18 +2663,20 @@ static void PossessTheNodeCureWatchdog(void *arg) {
 	ncw_arg_t *wd_arg = (ncw_arg_t *) arg;
 	CHECK_EQ(wd_arg->ncw, ncw);
 	wd_arg->ncw->Possess(wd_arg);
+
 	UNREACHABLE();
 }
 
-void InitializeNodeCureWatchdog() {
+void InitializeNodeCureWatchdog(v8::Isolate *isolate) {
 	PrintErrorString("Initializing watchdog\n");
 
 	/* Create a possessor for the NodeCureWatchdog. */ 
-	uv_thread_t wd_thr;
-
 	ncw_arg_t wd_arg;
+	wd_arg.isolate = isolate;
 	wd_arg.ncw = ncw;
 	CHECK_EQ(uv_sem_init(&wd_arg.ready, 0), 0);
+
+	uv_thread_t wd_thr;
 	int create = uv_thread_create(&wd_thr, PossessTheNodeCureWatchdog, &wd_arg);
 	CHECK_EQ(create, 0);
 
