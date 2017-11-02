@@ -2152,6 +2152,7 @@ MaybeHandle<Object> Debug::Call(Handle<Object> fun, Handle<Object> data) {
 }
 
 void Debug::HandleDebugBreak(IgnoreBreakMode ignore_break_mode) {
+	dprintf(2, "Debug::HandleDebugBreak: enter\n");
   // Initialize LiveEdit.
   LiveEdit::InitializeThreadLocal(this);
   // Ignore debug break during bootstrapping.
@@ -2163,6 +2164,8 @@ void Debug::HandleDebugBreak(IgnoreBreakMode ignore_break_mode) {
 
   StackLimitCheck check(isolate_);
   if (check.HasOverflowed()) return;
+
+	dprintf(2, "Debug::HandleDebugBreak: After initial checks\n");
 
   { JavaScriptFrameIterator it(isolate_);
     DCHECK(!it.done());
@@ -2176,6 +2179,7 @@ void Debug::HandleDebugBreak(IgnoreBreakMode ignore_break_mode) {
                               ? IsBlackboxed(shared)
                               : AllFramesOnStackAreBlackboxed();
       if (ignore_break) {
+				dprintf(2, "Debug::HandleDebugBreak: Ignoring break. IsBlackboxed(shared) %d\n", IsBlackboxed(shared));
         // Inspector uses pause on next statement for asynchronous breakpoints.
         // When breakpoint is fired we try to break on first not blackboxed
         // statement. To achieve this goal we need to deoptimize current
@@ -2195,6 +2199,8 @@ void Debug::HandleDebugBreak(IgnoreBreakMode ignore_break_mode) {
       if (IsMutedAtCurrentLocation(it.frame())) return;
     }
   }
+
+	dprintf(2, "Debug::HandleDebugBreak: I think I'm about to hit a breakpoint\n");
 
   isolate_->stack_guard()->ClearDebugBreak();
 

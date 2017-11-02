@@ -812,6 +812,8 @@ class Isolate {
   Object* TerminateExecution();
   void CancelTerminateExecution();
 
+  Object* Timeout();
+
   void RequestInterrupt(InterruptCallback callback, void* data);
   void InvokeApiInterruptCallbacks();
 

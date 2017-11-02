@@ -336,10 +336,12 @@ void StackGuard::RequestInterrupt(InterruptFlag flag) {
   // Check the chain of PostponeInterruptsScopes for interception.
   if (thread_local_.postpone_interrupts_ &&
       thread_local_.postpone_interrupts_->Intercept(flag)) {
+		dprintf(2, "StackGuard::RequestInterrupt: Ignoring flag %d\n", flag);
     return;
   }
 
   // Not intercepted.  Set as active interrupt flag.
+	dprintf(2, "StackGuard::RequestInterrupt: Setting flag %d\n", flag);
   thread_local_.interrupt_flags_ |= flag;
   set_interrupt_limits(access);
 
@@ -471,12 +473,19 @@ Object* StackGuard::HandleInterrupts() {
   }
 
   if (CheckDebugBreak()) {
+		dprintf(2, "StackGuard::HandleInterrupts: Handling debug break\n");
     isolate_->debug()->HandleDebugBreak(kIgnoreIfTopFrameBlackboxed);
   }
 
   if (CheckAndClearInterrupt(TERMINATE_EXECUTION)) {
+		dprintf(2, "StackGuard::HandleInterrupts: Terminating execution\n");
     return isolate_->TerminateExecution();
   }
+
+	if (CheckAndClearInterrupt(TIMEOUT)) {
+		dprintf(2, "StackGuard::HandleInterrupts: Timeout\n");
+    return isolate_->Timeout();
+	}
 
   if (CheckAndClearInterrupt(DEOPT_MARKED_ALLOCATION_SITES)) {
     isolate_->heap()->DeoptMarkedAllocationSites();
@@ -490,6 +499,11 @@ Object* StackGuard::HandleInterrupts() {
   if (CheckAndClearInterrupt(API_INTERRUPT)) {
     // Callbacks must be invoked outside of ExecusionAccess lock.
     isolate_->InvokeApiInterruptCallbacks();
+  }
+
+  if (CheckDebugBreak()) {
+		dprintf(2, "StackGuard::HandleInterrupts: Handling debug break\n");
+    isolate_->debug()->HandleDebugBreak(kIgnoreIfTopFrameBlackboxed);
   }
 
   isolate_->counters()->stack_interrupts()->Increment();

@@ -7268,6 +7268,15 @@ class V8_EXPORT Isolate {
   void CancelTerminateExecution();
 
   /**
+   * Forcefully cause the current thread of JavaScript execution
+   * in the given isolate to throw a TimeoutError.
+   *
+   * This method can be used by any thread even if that thread has not
+   * acquired the V8 lock with a Locker object.
+   */
+  void Timeout();
+
+  /**
    * Request V8 to interrupt long running JavaScript code and invoke
    * the given |callback| passing the given |data| to it. After |callback|
    * returns control will be returned to the JavaScript code.

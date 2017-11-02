@@ -8433,6 +8433,11 @@ void Isolate::CancelTerminateExecution() {
   isolate->CancelTerminateExecution();
 }
 
+void Isolate::Timeout() {
+  i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
+  isolate->stack_guard()->RequestTimeout();
+}
+
 
 void Isolate::RequestInterrupt(InterruptCallback callback, void* data) {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
