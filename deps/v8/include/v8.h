@@ -7277,6 +7277,19 @@ class V8_EXPORT Isolate {
   void Timeout();
 
   /**
+   * Is V8 preparing to throw an exception due to a Timeout.
+   *
+   * Returns true if JavaScript execution will time out
+   * because of a call to Timeout.
+	 * There are still JavaScript frames on the stack.
+	 * The timeout exception has not yet been thrown or is still active.
+	 *
+	 * If a C++ add-on is running a complex algorithm, it should check this
+	 * at "safe points" and return in error if IsTimedOut().
+   */
+  bool IsTimedOut();
+
+  /**
    * Request V8 to interrupt long running JavaScript code and invoke
    * the given |callback| passing the given |data| to it. After |callback|
    * returns control will be returned to the JavaScript code.

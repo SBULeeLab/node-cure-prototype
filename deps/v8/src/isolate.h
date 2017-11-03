@@ -813,6 +813,7 @@ class Isolate {
   void CancelTerminateExecution();
 
   Object* Timeout();
+  bool IsTimedOut();
 
   void RequestInterrupt(InterruptCallback callback, void* data);
   void InvokeApiInterruptCallbacks();

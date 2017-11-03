@@ -426,6 +426,9 @@ void Utils::ReportOOMFailure(const char* location, bool is_heap_oom) {
 }
 
 static inline bool IsExecutionTerminatingCheck(i::Isolate* isolate) {
+	/* TODO Why does this work?
+	 * I don't see how Throw() propagates pending_exception_ to scheduled_exception_
+	 * in StackGuard::HandleInterrupts. */
   if (isolate->has_scheduled_exception()) {
     return isolate->scheduled_exception() ==
         isolate->heap()->termination_exception();
@@ -433,6 +436,9 @@ static inline bool IsExecutionTerminatingCheck(i::Isolate* isolate) {
   return false;
 }
 
+static inline bool IsTimedOutCheck(i::Isolate* isolate) {
+	return isolate->stack_guard()->CheckTimeout();
+}
 
 void V8::SetNativesDataBlob(StartupData* natives_blob) {
   i::V8::SetNativesBlob(natives_blob);
@@ -8426,7 +8432,6 @@ bool Isolate::IsExecutionTerminating() {
   return IsExecutionTerminatingCheck(isolate);
 }
 
-
 void Isolate::CancelTerminateExecution() {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
   isolate->stack_guard()->ClearTerminateExecution();
@@ -8438,6 +8443,10 @@ void Isolate::Timeout() {
   isolate->stack_guard()->RequestTimeout();
 }
 
+bool Isolate::IsTimedOut() {
+  i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
+  return IsTimedOutCheck(isolate);
+}
 
 void Isolate::RequestInterrupt(InterruptCallback callback, void* data) {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
