@@ -36,13 +36,23 @@
 
 namespace node {
 
+/**
+ * Watchdog offers an asynchronous way to wait for a timeout and then execute a CB.
+ * If the thing you were waiting for completes before the timeout expires, destroying the Watchdog
+ *   will prevent the timeout CB from running.
+ * You can register one CB for the case of "we aborted before timeout",
+ * and another CB for the case of "we timed out".
+ */
 class Watchdog {
  public:
-  explicit Watchdog(v8::Isolate* isolate,
-                    uint64_t ms,
-                    bool* timed_out = nullptr);
+  typedef void (*WatchdogFunc)(void *data);
+
+  explicit Watchdog(uint64_t ms,
+										WatchdogFunc aborted_cb, // Called on destruction if the timer did not go off.
+										WatchdogFunc timeout_cb, // Called on expiration of the timer.
+										void *data = nullptr // Passed to the WatchdogFunc's.
+										);
   ~Watchdog();
-  v8::Isolate* isolate() { return isolate_; }
 
  private:
   static void Run(void* arg);
@@ -54,7 +64,12 @@ class Watchdog {
   uv_loop_t* loop_;
   uv_async_t async_;
   uv_timer_t timer_;
-  bool* timed_out_;
+
+	bool timed_out_;
+
+	WatchdogFunc aborted_cb_;
+	WatchdogFunc timeout_cb_;
+	void *data_;
 };
 
 /**

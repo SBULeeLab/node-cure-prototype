@@ -25,13 +25,13 @@
 
 namespace node {
 
-Watchdog::Watchdog(v8::Isolate* isolate, uint64_t ms, bool* timed_out)
-    : isolate_(isolate), timed_out_(timed_out) {
+Watchdog::Watchdog(uint64_t ms, WatchdogFunc aborted_cb, WatchdogFunc timeout_cb, void *data)
+    : aborted_cb_(aborted_cb), timeout_cb_(timeout_cb), data_(data), timed_out_(false) {
 
   int rc;
   loop_ = new uv_loop_t;
   CHECK(loop_);
-  rc = uv_loop_init(loop_);
+  rc = uv_loop_init(loop_); // NB This creates worker pool that we don't need.
   if (rc != 0) {
     FatalError("node::Watchdog::Watchdog()",
                "Failed to initialize uv loop.");
@@ -82,15 +82,20 @@ void Watchdog::Run(void* arg) {
 
 void Watchdog::Async(uv_async_t* async) {
   Watchdog* w = ContainerOf(&Watchdog::async_, async);
-  uv_stop(w->loop_);
+	uv_stop(w->loop_);
+
+	if (!w->timed_out_ && w->aborted_cb_ != NULL)
+		w->aborted_cb_(w->data_);
 }
 
 
 void Watchdog::Timer(uv_timer_t* timer) {
   Watchdog* w = ContainerOf(&Watchdog::timer_, timer);
-  *w->timed_out_ = true;
-  w->isolate()->TerminateExecution();
+  w->timed_out_ = true;
   uv_stop(w->loop_);
+
+	if (w->timeout_cb_ != NULL)
+		w->timeout_cb_(w->data_);
 }
 
 TimeoutWatchdog::TimeoutWatchdog(v8::Isolate* isolate, long timeout_ms)
@@ -108,7 +113,7 @@ TimeoutWatchdog::TimeoutWatchdog(v8::Isolate* isolate, long timeout_ms)
 
   loop_ = new uv_loop_t;
   CHECK(loop_);
-  rc = uv_loop_init(loop_);
+  rc = uv_loop_init(loop_); // NB This creates worker pool that we don't need. Same as Watchdog though.
   if (rc != 0) {
     FatalError("node::TimeoutWatchdog::TimeoutWatchdog()",
                "Failed to initialize uv loop.");

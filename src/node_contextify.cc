@@ -979,6 +979,16 @@ class ContextifyScript : public BaseObject {
     return context;
   }
 
+	typedef struct wd_dat_s {
+		bool timed_out;
+		v8::Isolate *isolate;
+	} wd_dat_t;
+
+	static void WatchdogFunc_Timeout (void *data) {
+		wd_dat_t *wd_dat = static_cast<wd_dat_t*>(data);
+		wd_dat->timed_out = true;
+		wd_dat->isolate->TerminateExecution();
+	}
 
   static bool EvalMachine(Environment* env,
                           const int64_t timeout,
@@ -1001,25 +1011,31 @@ class ContextifyScript : public BaseObject {
     Local<Value> result;
     bool timed_out = false;
     bool received_signal = false;
+
+		// timed_out must be available after Watchdog is destroyed.
+		wd_dat_t wd_dat;
+		wd_dat.isolate = env->isolate();
+		wd_dat.timed_out = false;
+
     if (break_on_sigint && timeout != -1) {
-      Watchdog wd(env->isolate(), timeout, &timed_out);
+      Watchdog wd(timeout, NULL, WatchdogFunc_Timeout, &wd_dat);
       SigintWatchdog swd(env->isolate(), &received_signal);
       result = script->Run();
     } else if (break_on_sigint) {
       SigintWatchdog swd(env->isolate(), &received_signal);
       result = script->Run();
     } else if (timeout != -1) {
-      Watchdog wd(env->isolate(), timeout, &timed_out);
+      Watchdog wd(timeout, NULL, WatchdogFunc_Timeout, &wd_dat);
       result = script->Run();
     } else {
       result = script->Run();
     }
 
-    if (timed_out || received_signal) {
+    if (wd_dat.timed_out || received_signal) {
       // It is possible that execution was terminated by another timeout in
       // which this timeout is nested, so check whether one of the watchdogs
       // from this invocation is responsible for termination.
-      if (timed_out) {
+      if (wd_dat.timed_out) {
         env->ThrowError("Script execution timed out.");
       } else if (received_signal) {
         env->ThrowError("Script execution interrupted.");
@@ -1028,7 +1044,7 @@ class ContextifyScript : public BaseObject {
     }
 
     if (try_catch->HasCaught()) {
-      if (!timed_out && !received_signal && display_errors) {
+      if (!wd_dat.timed_out && !received_signal && display_errors) {
         // We should decorate non-termination exceptions
         DecorateErrorStack(env, *try_catch);
       }
