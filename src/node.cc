@@ -4889,7 +4889,7 @@ inline int Start(uv_loop_t* event_loop,
     node_isolate = isolate;
 
 		CHECK_EQ(timeout_watchdog, nullptr);
-		char *env = getenv("NODECURE_NODE_TIMEOUT");
+		char *env = getenv("NODECURE_NODE_TIMEOUT_MS");
 		long timeout_ms = 1000;
 		if (env != NULL)
 			timeout_ms = atoll(env);
