@@ -93,6 +93,235 @@ void Watchdog::Timer(uv_timer_t* timer) {
   uv_stop(w->loop_);
 }
 
+TimeoutWatchdog::TimeoutWatchdog(v8::Isolate* isolate, long timeout_ms)
+    : isolate_(isolate), timeout_ms_(timeout_ms), active_(false), stopping_(false), time_of_last_timeout_ns_(0) {
+
+  int rc;
+
+	CHECK(pending_async_ids_.empty()); // Call me paranoid...
+
+	rc = uv_mutex_init(&lock_);
+	CHECK(rc == 0);
+
+	rc = uv_sem_init(&stopped_, 0);
+	CHECK(rc == 0);
+
+  loop_ = new uv_loop_t;
+  CHECK(loop_);
+  rc = uv_loop_init(loop_);
+  if (rc != 0) {
+    FatalError("node::TimeoutWatchdog::TimeoutWatchdog()",
+               "Failed to initialize uv loop.");
+  }
+
+  rc = uv_async_init(loop_, &async_, &TimeoutWatchdog::Async);
+  CHECK_EQ(0, rc);
+
+  rc = uv_timer_init(loop_, &timer_);
+  CHECK_EQ(0, rc);
+
+  rc = uv_thread_create(&thread_, &TimeoutWatchdog::Run, this);
+  CHECK_EQ(0, rc);
+}
+
+TimeoutWatchdog::~TimeoutWatchdog() {
+	/* Clean up the TW thread. */
+  dprintf(2, "TimeoutWatchdog::~TimeoutWatchdog: Cleaning up TW thread\n");
+	uv_timer_stop(&timer_);
+
+	// Signal TW thread that we're done.
+	uv_mutex_lock(&lock_);
+		dprintf(2, "TimeoutWatchdog::~TimeoutWatchdog: Signaling TW thread\n");
+		stopping_ = true; 
+		uv_async_send(&async_);
+	uv_mutex_unlock(&lock_);
+
+	dprintf(2, "TimeoutWatchdog::~TimeoutWatchdog: Waiting for TW thread to down the semaphore\n");
+	uv_sem_wait(&stopped_);
+
+	// Close handles so loop_ will stop.
+  // Loop ref count reaches zero when both handles are closed.
+  dprintf(2, "TimeoutWatchdog::~TimeoutWatchdog: Closing handles on loop_\n");
+  uv_close(reinterpret_cast<uv_handle_t*>(&async_), nullptr);
+	uv_timer_stop(&timer_);
+  uv_close(reinterpret_cast<uv_handle_t*>(&timer_), nullptr);
+
+  dprintf(2, "TimeoutWatchdog::~TimeoutWatchdog: Joining thread\n");
+  uv_thread_join(&thread_);
+
+  // UV_RUN_DEFAULT so that libuv has a chance to clean up.
+  dprintf(2, "TimeoutWatchdog::~TimeoutWatchdog: Final uv_run for libuv cleanup\n");
+  uv_run(loop_, UV_RUN_DEFAULT);
+
+  int rc = uv_loop_close(loop_);
+  CHECK_EQ(0, rc);
+  delete loop_;
+  loop_ = nullptr;
+
+	uv_mutex_destroy(&lock_);
+}
+
+void TimeoutWatchdog::StartCountdown(long async_id) {
+	uv_mutex_lock(&lock_);
+	CHECK(!stopping_);
+
+	bool was_empty = pending_async_ids_.empty();
+	pending_async_ids_.push(async_id);
+
+	// Signal wd thread: change in state.
+  if (was_empty)
+		uv_async_send(&async_);
+
+	dprintf(2, "TimeoutWatchdog::StartCountdown: was_empty %d\n", was_empty);
+	uv_mutex_unlock(&lock_);
+
+	return;
+}
+
+void TimeoutWatchdog::DisableCountdown(long async_id) {
+	uv_mutex_lock(&lock_);
+	CHECK(!stopping_);
+
+	CHECK(!pending_async_ids_.empty());
+	pending_async_ids_.pop();
+	bool now_empty = pending_async_ids_.empty();
+
+	// Signal wd thread: change in state.
+	if (now_empty)
+		uv_async_send(&async_);
+
+	dprintf(2, "TimeoutWatchdog::DisableCountdown: now_empty %d\n", now_empty);
+	uv_mutex_unlock(&lock_);
+
+	return;
+}
+
+void TimeoutWatchdog::Run(void* arg) {
+  TimeoutWatchdog* wd = static_cast<TimeoutWatchdog*>(arg);
+
+	dprintf(2, "TimeoutWatchdog::Run: Calling uv_run\n");
+  uv_run(wd->loop_, UV_RUN_DEFAULT); // Run until we call uv_stop due to signal from TimeoutWatchdog::~TimeoutWatchdog.
+	dprintf(2, "TimeoutWatchdog::Run: returning\n");
+}
+
+/**
+ * At some point, a StartCountdown found the stack empty or a DisableCountdown emptied the stack.
+ * Since uv_async_send can be coalesced, we can't assume anything about the state of the stack now.
+ */
+void TimeoutWatchdog::Async(uv_async_t* async) {
+  TimeoutWatchdog *w = ContainerOf(&TimeoutWatchdog::async_, async);
+
+  dprintf(2, "TimeoutWatchdog::Async: entry\n");
+	uv_mutex_lock(&w->lock_);
+	bool any_async_ids = !w->pending_async_ids_.empty();
+	int rc;
+
+	if (w->stopping_) {
+		dprintf(2, "TimeoutWatchdog::Async: stopping_, calling uv_stop\n");
+		uv_stop(w->loop_);
+		uv_sem_post(&w->stopped_);
+		goto UNLOCK_AND_RETURN;
+	}
+
+	if (w->active_) {
+		dprintf(2, "TimeoutWatchdog::Async: I was active\n");
+		// If we were active and someone uv_async_send'd us:
+		//   - the stack emptied at some point.
+		//   - therefore the current timer should be stopped.
+		rc = uv_timer_stop(&w->timer_);
+		CHECK_EQ(rc, 0);
+
+		if (any_async_ids) {
+			// If the stack is occupied, the 'empty' async send was coalesced with a 'not empty' send.
+			// We should start a timer.
+			dprintf(2, "TimeoutWatchdog::Async: Stack is occupied, starting the timer\n");
+			w->_StartTimer();
+		}
+		else {
+			dprintf(2, "TimeoutWatchdog::Async: Stack is empty, nothing to do\n");
+			w->active_ = false;
+			w->timed_out_ = false; // When the stack is clear, the timeout has been resolved.
+		}
+	}
+	else {
+			dprintf(2, "TimeoutWatchdog::Async: I was not active\n");
+		// If we were not active and someone uv_async_send'd us:
+		//   - the stack was not empty at some point.
+		//   - therefore it may still not be empty
+		if (any_async_ids) {
+			w->_StartTimer();
+		}
+		else
+			w->timed_out_ = false; // No timeout pending.
+	}
+
+UNLOCK_AND_RETURN:
+	dprintf(2, "TimeoutWatchdog::Async: active_ %d stopping_ %d\n", w->active_, w->stopping_);
+	uv_mutex_unlock(&w->lock_);
+	return;
+}
+
+bool TimeoutWatchdog::HasTimerExpired () {
+	uv_mutex_lock(&lock_);
+
+	bool expired = timed_out_;
+
+	dprintf(2, "TimeoutWatchdog::HasTimerExpired: %d\n", expired);
+	uv_mutex_unlock(&lock_);
+
+	return expired;
+}
+
+/* Caller should hold lock_. */
+void TimeoutWatchdog::_StartTimer() {
+	uint64_t now_ms = uv_hrtime() / 1000000;
+	dprintf(2, "TimeoutWatchdog::_StartTimer: entry at %lld\n", now_ms);
+
+	uv_timer_stop(&timer_); // Make sure it's stopped. Now sure what happens if I start a started timer, but this is cheap since the timer heap has size <= 1.
+	uint64_t repeat = 0; // Don't repeat; libuv's timers go off at timeout_ms_ intervals accounting for time shaving. We restart with full timeout ourselves.
+	int rc = uv_timer_start(&timer_, &TimeoutWatchdog::Timer, timeout_ms_, repeat);
+	CHECK_EQ(0, rc);
+
+	active_ = true;
+}
+
+
+void TimeoutWatchdog::Timer(uv_timer_t* timer) {
+  TimeoutWatchdog* w = ContainerOf(&TimeoutWatchdog::timer_, timer);
+
+	uint64_t last_timeout_ns, now_ns, since_in_ms;
+
+  dprintf(2, "TimeoutWatchdog::Timer: entry at %ld\n", (long) time(NULL));
+	uv_mutex_lock(&w->lock_);
+
+	if (w->stopping_) {
+			dprintf(2, "TimeoutWatchdog::Timer: stopping_, returning early\n");
+			goto UNLOCK_AND_RETURN;
+	}
+
+	last_timeout_ns = w->time_of_last_timeout_ns_;
+	now_ns = uv_hrtime();
+	CHECK(last_timeout_ns < now_ns);
+	since_in_ms = (now_ns - last_timeout_ns) / 1000000; // 10e9 / 10e6 = 10e3
+
+	if (0 < last_timeout_ns) { // Check after the first timeout
+		dprintf(2, "TimeoutWatchdog::Timer: %lld ms since last timeout (timeout_ms %lld)\n", since_in_ms, w->timeout_ms_);
+		CHECK(w->timeout_ms_ <= since_in_ms + 1); // Timeouts should be well spaced. +1 to account for truncating effect of division.
+	}
+
+	CHECK(w->active_);
+  w->timed_out_ = true;
+  dprintf(2, "TimeoutWatchdog::Timer: Calling isolate()->Timeout()\n");
+  w->isolate()->Timeout(); // TODO Is it safe to call Timeout if the previous Timeout interrupt has been handled but the Timeout it threw hasn't cleared yet? Need to modify V8-land?
+
+	w->time_of_last_timeout_ns_ = now_ns;
+	w->_StartTimer();
+
+UNLOCK_AND_RETURN:
+  dprintf(2, "TimeoutWatchdog::Timer: return\n");
+	uv_mutex_unlock(&w->lock_);
+	return;
+}
 
 SigintWatchdog::SigintWatchdog(
   v8::Isolate* isolate, bool* received_signal)

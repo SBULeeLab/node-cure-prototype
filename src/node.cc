@@ -78,6 +78,8 @@
 #include "../deps/v8/src/third_party/vtune/v8-vtune.h"
 #endif
 
+#include "node_watchdog.h"
+
 #include <errno.h>
 #include <fcntl.h>  // _O_RDWR
 #include <limits.h>  // PATH_MAX
@@ -259,6 +261,7 @@ static double prog_start_time;
 
 static Mutex node_isolate_mutex;
 static v8::Isolate* node_isolate;
+static TimeoutWatchdog *timeout_watchdog;
 
 node::DebugOptions debug_options;
 
@@ -878,112 +881,6 @@ const char *signo_string(int signo) {
   default: return "";
   }
 }
-
-/* TODO This should be in src/node_watchdog. */
-class NodeCureWatchdog;
-typedef struct ncw_arg_s {
-	NodeCureWatchdog *ncw;
-	v8::Isolate *isolate;
-	uv_sem_t ready;
-} ncw_arg_t;
-
-/* Singleton class. node.cc has the only copy. */
-class NodeCureWatchdog { // NodeCureWatchdog (NCW). Times are in ms.
-	public:
-		NodeCureWatchdog ();
-
-		/* Event Loop thread tells NCW to start the countdown. */
-	  void StartCountdown (long timeout);
-
-		/* Event Loop thread tells NCW to disable this countdown. */
-		void Rest ();
-
-		/* If there is an active countdown, report how long it was for.
-		 * Otherwise returns -1.
-		 */
-		long GetCountdownTimeout ();
-
-		/* If there is an active countdown, report the time remaining.
-		 * Otherwise returns -1.
-		 */
-		long GetCountdownRemaining ();
-
-		/* Returns true if there is an active countdown and it has expired. */
-		bool HasCountdownExpired ();
-
-		/* An NCW is possessed by a thread.
-		 * The possessing thread responds synchronously to the public APIs.
-		 * The possessing thread remains until it is Kill'd.
-		 *
-		 * Call this to be the possessor. The possessor never returns from this function.
-		 */
-		void Possess (ncw_arg_t *arg);
-
-		/* Kill and join this NCW's possessor. */
-		void Kill ();
-
-		v8::Isolate * isolate() { return isolate_; }
-
-	private:
-		v8::Isolate *isolate_;
-
-		bool possessed_;
-		bool expired_;
-		uv_thread_t tid_;
-};
-
-/* NodeCureWatchdog. */
-NodeCureWatchdog::NodeCureWatchdog () {
-	/* Enforce singleton status. */
-	static bool isSingleton = true;
-	CHECK_EQ(isSingleton, true);
-	isSingleton = false;
-
-	isolate_ = NULL;
-
-	possessed_ = false;
-	expired_ = false;
-}
-
-void NodeCureWatchdog::StartCountdown(long timeout) {
-}
-
-void NodeCureWatchdog::Rest() {
-}
-
-long NodeCureWatchdog::GetCountdownTimeout() {
-	return -1;
-}
-
-long NodeCureWatchdog::GetCountdownRemaining() {
-	return -1;
-}
-
-bool NodeCureWatchdog::HasCountdownExpired () {
-	return expired_;
-}
-
-void NodeCureWatchdog::Possess(ncw_arg_t *wd_arg) {
-	CHECK_EQ(possessed_, false);
-
-	expired_ = false;
-
-	isolate_ = wd_arg->isolate;
-	tid_ = uv_thread_self();
-	possessed_ = true;
-
-	uv_sem_post(&wd_arg->ready);
-
-	sleep(1);
-	PrintErrorString("NodeCureWatchdog::Possess: Triggering a timeout after 1 second\n");
-	isolate_->Timeout();
-
-	while (1);
-}
-
-void NodeCureWatchdog::Kill() {
-}
-
 
 Local<Value> ErrnoException(Isolate* isolate,
                             int errorno,
@@ -2654,55 +2551,45 @@ static void Hrtime(const FunctionCallbackInfo<Value>& args) {
   fields[2] = t % NANOS_PER_SEC;
 }
 
-/* Singleton instance. */
-NodeCureWatchdog *ncw = new NodeCureWatchdog();
+static void TimeoutWatchdogStart(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+	if (args.Length() != 1) {
+    env->ThrowError("process._watchdogStart takes exactly 1 argument.");
+		return;
+	}
+	if (!args[0]->IsNumber()) {
+    env->ThrowError("process._watchdogStart takes exactly 1 numeric argument.");
+		return;
+	}
 
-static void PossessTheNodeCureWatchdog(void *arg) {
-	PrintErrorString("PossessTheNodeCureWatchdog\n");
-
-	ncw_arg_t *wd_arg = (ncw_arg_t *) arg;
-	CHECK_EQ(wd_arg->ncw, ncw);
-	wd_arg->ncw->Possess(wd_arg);
-
-	UNREACHABLE();
+	int64_t async_id = args[0]->IntegerValue();
+	PrintErrorString("TimeoutWatchdogStart: async_id %lld\n", (long long) async_id);
+	timeout_watchdog->StartCountdown(async_id);
 }
 
-void InitializeNodeCureWatchdog(v8::Isolate *isolate) {
-	PrintErrorString("Initializing watchdog\n");
+static void TimeoutWatchdogExpired(const FunctionCallbackInfo<Value>& args) {
+	bool expired = timeout_watchdog->HasTimerExpired();
+	PrintErrorString("TimeoutWatchdogExpired: expired %d\n", expired);
 
-	/* Create a possessor for the NodeCureWatchdog. */ 
-	ncw_arg_t wd_arg;
-	wd_arg.isolate = isolate;
-	wd_arg.ncw = ncw;
-	CHECK_EQ(uv_sem_init(&wd_arg.ready, 0), 0);
-
-	uv_thread_t wd_thr;
-	int create = uv_thread_create(&wd_thr, PossessTheNodeCureWatchdog, &wd_arg);
-	CHECK_EQ(create, 0);
-
-	PrintErrorString("InitializeNodeCureWatchdog: waiting for ncw to be ready\n");
-	uv_sem_wait(&wd_arg.ready);
-	PrintErrorString("InitializeNodeCureWatchdog: ncw is ready, returning\n");
-
-	return;
-}
-
-
-static void NodeCureWatchdogStart(const FunctionCallbackInfo<Value>& args) {
-	PrintErrorString("NodeCureWatchdogStart: Hello!\n");
-	ncw->StartCountdown(5); // TODO
-}
-
-static void NodeCureWatchdogExpired(const FunctionCallbackInfo<Value>& args) {
-	PrintErrorString("NodeCureWatchdogExpired: Hello!\n");
   Environment* env = Environment::GetCurrent(args.GetIsolate());
-	args.GetReturnValue().Set(Boolean::New(env->isolate(), ncw->HasCountdownExpired()));
+	args.GetReturnValue().Set(Boolean::New(env->isolate(), expired));
 }
 
 
-static void NodeCureWatchdogStop(const FunctionCallbackInfo<Value>& args) {
-	PrintErrorString("NodeCureWatchdogStop: Hello!\n");
-	ncw->Rest();
+static void TimeoutWatchdogStop(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+	if (args.Length() != 1) {
+    env->ThrowError("process._watchdogStop takes exactly 1 argument.");
+		return;
+	}
+	if (!args[0]->IsNumber()) {
+    env->ThrowError("process._watchdogStop takes exactly 1 numeric argument.");
+		return;
+	}
+
+	int64_t async_id = args[0]->IntegerValue();
+	PrintErrorString("TimeoutWatchdogStop: async_id %lld\n", (long long) async_id);
+	timeout_watchdog->DisableCountdown(async_id);
 }
 
 // Microseconds in a second, as a float, used in CPUUsage() below
@@ -3841,9 +3728,9 @@ void SetupProcessObject(Environment* env,
 
   env->SetMethod(process, "hrtime", Hrtime);
 
-  env->SetMethod(process, "_watchdogStart", NodeCureWatchdogStart);
-  env->SetMethod(process, "_watchdogExpired", NodeCureWatchdogExpired);
-  env->SetMethod(process, "_watchdogStop", NodeCureWatchdogStop);
+  env->SetMethod(process, "_watchdogStart", TimeoutWatchdogStart);
+  env->SetMethod(process, "_watchdogExpired", TimeoutWatchdogExpired);
+  env->SetMethod(process, "_watchdogStop", TimeoutWatchdogStop);
 
   env->SetMethod(process, "cpuUsage", CPUUsage);
 
@@ -5000,6 +4887,14 @@ inline int Start(uv_loop_t* event_loop,
     Mutex::ScopedLock scoped_lock(node_isolate_mutex);
     CHECK_EQ(node_isolate, nullptr);
     node_isolate = isolate;
+
+		CHECK_EQ(timeout_watchdog, nullptr);
+		char *env = getenv("NODECURE_NODE_TIMEOUT");
+		long timeout_ms = 1000;
+		if (env != NULL)
+			timeout_ms = atoll(env);
+		timeout_watchdog = new TimeoutWatchdog(node_isolate, timeout_ms);
+		CHECK_NE(timeout_watchdog, nullptr);
   }
 
   int exit_code;
@@ -5015,6 +4910,7 @@ inline int Start(uv_loop_t* event_loop,
     Mutex::ScopedLock scoped_lock(node_isolate_mutex);
     CHECK_EQ(node_isolate, isolate);
     node_isolate = nullptr;
+		delete timeout_watchdog;
   }
 
   isolate->Dispose();
