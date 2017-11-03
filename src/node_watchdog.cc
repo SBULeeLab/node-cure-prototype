@@ -26,7 +26,7 @@
 namespace node {
 
 Watchdog::Watchdog(uint64_t ms, WatchdogFunc aborted_cb, WatchdogFunc timeout_cb, void *data)
-    : aborted_cb_(aborted_cb), timeout_cb_(timeout_cb), data_(data), timed_out_(false) {
+    : aborted_cb_(aborted_cb), timeout_cb_(timeout_cb), data_(data), timed_out_(false), aborted_(false) {
 
   int rc;
   loop_ = new uv_loop_t;
@@ -82,8 +82,11 @@ void Watchdog::Run(void* arg) {
 
 void Watchdog::Async(uv_async_t* async) {
   Watchdog* w = ContainerOf(&Watchdog::async_, async);
-	uv_stop(w->loop_);
+	uv_stop(w->loop_); // Signal timer not to go off, but no guarantee.
 
+	w->aborted_ = true;
+
+	// Only call aborted if not timed out.
 	if (!w->timed_out_ && w->aborted_cb_ != NULL)
 		w->aborted_cb_(w->data_);
 }
@@ -91,10 +94,12 @@ void Watchdog::Async(uv_async_t* async) {
 
 void Watchdog::Timer(uv_timer_t* timer) {
   Watchdog* w = ContainerOf(&Watchdog::timer_, timer);
-  w->timed_out_ = true;
-  uv_stop(w->loop_);
+  uv_stop(w->loop_); // Signal async not to go off, but no guarantee.
 
-	if (w->timeout_cb_ != NULL)
+  w->timed_out_ = true;
+
+	// Only call timeout if not aborted.
+	if (!w->aborted_ && w->timeout_cb_ != NULL)
 		w->timeout_cb_(w->data_);
 }
 

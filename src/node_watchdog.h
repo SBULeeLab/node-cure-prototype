@@ -38,10 +38,18 @@ namespace node {
 
 /**
  * Watchdog offers an asynchronous way to wait for a timeout and then execute a CB.
- * If the thing you were waiting for completes before the timeout expires, destroying the Watchdog
- *   will prevent the timeout CB from running.
- * You can register one CB for the case of "we aborted before timeout",
- * and another CB for the case of "we timed out".
+ * The Watchdog maintains a separate thread that monitors the timeout.
+ * If the timeout expires, its timeout handler will be called.
+ * If you destroy the Watchdog before the timer expires, its abort handler will be called.
+ * Either the abort handler or the timeout handler will be called, but not both.
+ * If you try to destroy concurrently with the expiration of the timer, it's a race, but only one handler will be called.
+ *
+ * The Watchdog paradigm is this:
+ *   Create a Watchdog with a time limit (ms) and handlers for abort and for timeout.
+ *   Do work on your thread.
+ *     - Make sure you check to see if the Watchdog has expired.
+ *       For example, the Watchdog timeout might signal your thread that it should clean up.
+ *   On completion, destroy the Watchdog -- the Watchdog will run the abort handler.
  */
 class Watchdog {
  public:
@@ -65,7 +73,10 @@ class Watchdog {
   uv_async_t async_;
   uv_timer_t timer_;
 
+	/* Make sure we only call one of aborted_cb_ and timeout_cb_.
+	 * No lock required because these are tested in Async and Timer, which both run on the Watchdog thread (atomicity guarantee). */
 	bool timed_out_;
+	bool aborted_;
 
 	WatchdogFunc aborted_cb_;
 	WatchdogFunc timeout_cb_;
