@@ -212,11 +212,13 @@ int uv_thread_join(uv_thread_t *tid) {
   return -pthread_join(*tid, NULL);
 }
 
+int uv__thread_cancel(uv_thread_t *tid) {
+	return pthread_cancel(*tid);
+}
 
 int uv_thread_equal(const uv_thread_t* t1, const uv_thread_t* t2) {
   return pthread_equal(*t1, *t2);
 }
-
 
 int uv_mutex_init(uv_mutex_t* mutex) {
 #if defined(NDEBUG) || !defined(PTHREAD_MUTEX_ERRORCHECK)

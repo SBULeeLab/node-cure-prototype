@@ -186,6 +186,9 @@ int uv_thread_join(uv_thread_t *tid) {
   }
 }
 
+int uv_thread_cancel(uv_thread_t *tid) {
+	return UV_ENOTSUP;
+}
 
 int uv_thread_equal(const uv_thread_t* t1, const uv_thread_t* t2) {
   return *t1 == *t2;
