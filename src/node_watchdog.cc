@@ -31,7 +31,7 @@ Watchdog::Watchdog(uint64_t ms, WatchdogFunc aborted_cb, WatchdogFunc timeout_cb
   int rc;
   loop_ = new uv_loop_t;
   CHECK(loop_);
-  rc = uv_loop_init(loop_); // NB This creates worker pool that we don't need.
+  rc = uv_loop_init(loop_); // NB uv_loop_init doesn't initialize a worker pool. It's on the first time you uv_queue_work.
   if (rc != 0) {
     FatalError("node::Watchdog::Watchdog()",
                "Failed to initialize uv loop.");
@@ -118,7 +118,7 @@ TimeoutWatchdog::TimeoutWatchdog(v8::Isolate* isolate, long timeout_ms)
 
   loop_ = new uv_loop_t;
   CHECK(loop_);
-  rc = uv_loop_init(loop_); // NB This creates worker pool that we don't need. Same as Watchdog though.
+  rc = uv_loop_init(loop_); // NB uv_loop_init doesn't initialize a worker pool. It's on the first time you uv_queue_work.
   if (rc != 0) {
     FatalError("node::TimeoutWatchdog::TimeoutWatchdog()",
                "Failed to initialize uv loop.");
