@@ -212,8 +212,12 @@ int uv_thread_join(uv_thread_t *tid) {
   return -pthread_join(*tid, NULL);
 }
 
-int uv__thread_cancel(uv_thread_t *tid) {
+int uv_thread_cancel(uv_thread_t *tid) {
 	return pthread_cancel(*tid);
+}
+
+int uv_thread_detach(uv_thread_t *tid) {
+	return pthread_detach(*tid);
 }
 
 int uv_thread_equal(const uv_thread_t* t1, const uv_thread_t* t2) {

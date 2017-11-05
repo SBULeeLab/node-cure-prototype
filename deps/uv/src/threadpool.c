@@ -29,37 +29,40 @@
 
 #define MAX_THREADPOOL_SIZE 128
 
+#include "threadpool-priv.h"
+
 #if 0
 #define uv_log(...)
 #else
 void uv_log (const char *format, ... ){
-    static FILE *log_fp = NULL;
-		static uv_mutex_t mutex;
-    char buffer[512] = {0,};
-    va_list args;
+	int rc;
+	static FILE *log_fp = NULL;
+	static uv_mutex_t log_mutex;
+	char buffer[512] = {0,};
+	va_list args;
 
-    if (log_fp == NULL){
-        // init once
-        log_fp = fopen("/tmp/uv.log","w");
-        if (!log_fp) abort();
+	if (log_fp == NULL){
+		/* Init once */
+		log_fp = fopen("/tmp/uv.log","w");
+		if (!log_fp) abort();
 
-				int rc = uv_mutex_init(&mutex);
-				if (rc) abort();
-    }
-    
-		uv_mutex_lock(&mutex);
+		rc = uv_mutex_init(&log_mutex);
+		if (rc) abort();
+	}
 
-    // va
-    va_start (args, format);
-    vsnprintf (buffer, 512, format, args);
+	uv_mutex_lock(&log_mutex);
 
-    // print
-    fprintf(log_fp, "[0x%x] %s", uv_thread_self(), buffer);
-    fflush(log_fp);
+	/* va */
+	va_start (args, format);
+	vsnprintf (buffer, 512, format, args);
 
-    va_end (args);
+	/* print */
+	fprintf(log_fp, "[%lu] %s", uv_thread_self(), buffer);
+	fflush(log_fp);
 
-		uv_mutex_unlock(&mutex);
+	va_end (args);
+
+	uv_mutex_unlock(&log_mutex);
 }
 #endif
 
@@ -67,12 +70,14 @@ static uv_once_t once = UV_ONCE_INIT;
 static uv_cond_t cond;
 static uv_mutex_t mutex;
 static unsigned int idle_executors;
-static unsigned int nexecutors;
-static uv__executor* executors;
-static uv__executor default_executors[4];
+static unsigned int n_executors;
+static uv__executor_t* executors;
+static uv__executor_t default_executors[4];
 static QUEUE exit_message;
 static QUEUE wq; /* New work is queued to wq and popped by workers. */
 static volatile int initialized;
+
+static int uv__manager_init (uv__manager_t *mgr);
 
 static void uv__cancelled(struct uv__work* w) {
   abort();
@@ -96,7 +101,8 @@ UV_DESTRUCTOR(static void cleanup(void)) {
 
   post(&exit_message);
 
-  for (i = 0; i < nexecutors; i++)
+	sleep(1); /* TODO Hack. Need to implement uv__executor_join. */
+  for (i = 0; i < n_executors; i++)
     if (uv__executor_join(executors + i))
       abort();
 
@@ -107,7 +113,7 @@ UV_DESTRUCTOR(static void cleanup(void)) {
   uv_cond_destroy(&cond);
 
   executors = NULL;
-  nexecutors = 0;
+  n_executors = 0;
   initialized = 0;
 }
 #endif
@@ -117,20 +123,21 @@ static void init_executors(void) {
   unsigned int i;
   const char* val;
 
-  nexecutors = ARRAY_SIZE(default_executors);
+  n_executors = ARRAY_SIZE(default_executors);
   val = getenv("UV_THREADPOOL_SIZE");
   if (val != NULL)
-    nexecutors = atoi(val);
-  if (nexecutors == 0)
-    nexecutors = 1;
-  if (nexecutors > MAX_THREADPOOL_SIZE)
-    nexecutors = MAX_THREADPOOL_SIZE;
+    n_executors = atoi(val);
+  if (n_executors == 0)
+    n_executors = 1;
+  if (n_executors > MAX_THREADPOOL_SIZE)
+    n_executors = MAX_THREADPOOL_SIZE;
 
+	uv_log("init_executors: %d executors\n", n_executors);
   executors = default_executors;
-  if (nexecutors > ARRAY_SIZE(default_executors)) {
-    executors = uv__malloc(nexecutors * sizeof(executors[0]));
+  if (n_executors > ARRAY_SIZE(default_executors)) {
+    executors = uv__malloc(n_executors * sizeof(executors[0]));
     if (executors == NULL) {
-      nexecutors = ARRAY_SIZE(default_executors);
+      n_executors = ARRAY_SIZE(default_executors);
       executors = default_executors;
     }
   }
@@ -143,7 +150,7 @@ static void init_executors(void) {
 
   QUEUE_INIT(&wq);
 
-  for (i = 0; i < nexecutors; i++) {
+  for (i = 0; i < n_executors; i++) {
 		uv_log("init_executors: Initializing executor %i: %p\n", i, executors + i);
     if (uv__executor_init(executors + i))
       abort();
@@ -210,35 +217,6 @@ static int uv__work_cancel(uv_loop_t* loop, uv_req_t* req, struct uv__work* w) {
   uv_mutex_unlock(&loop->wq_mutex);
 
   return 0;
-}
-
-static int uv__work_cancel(uv_loop_t* loop, uv_req_t* req, struct uv__work* w) {
-  int cancelled;
-
-  uv_mutex_lock(&mutex);
-  uv_mutex_lock(&w->loop->wq_mutex);
-
-  cancelled = !QUEUE_EMPTY(&w->wq) && w->work != NULL;
-  if (cancelled)
-    QUEUE_REMOVE(&w->wq);
-
-  uv_mutex_unlock(&w->loop->wq_mutex);
-  uv_mutex_unlock(&mutex);
-
-  if (!cancelled)
-    return UV_EBUSY;
-
-  w->work = uv__cancelled;
-  uv_mutex_lock(&loop->wq_mutex);
-  QUEUE_INSERT_TAIL(&loop->wq, &w->wq);
-  uv_async_send(&loop->wq_async);
-  uv_mutex_unlock(&loop->wq_mutex);
-
-  return 0;
-}
-
-static int uv__work_cancel_active(uv_loop_t* loop, uv_req_t* req, struct uv__work* w) {
-	return 0;
 }
 
 void uv__work_done(uv_async_t* handle) {
@@ -332,50 +310,60 @@ int uv_cancel(uv_req_t* req) {
  ***************/
 
 int uv__executor_init (uv__executor_t *e) {
+	int rc;
 	uv_log("uv__executor_init: Entry\n");
 
 	if (e == NULL) abort();
 
-	// Create a manager.
+	memset(e, 0, sizeof(*e));
+
+	/* Create a manager. */
 	uv_log("uv__executor_init: Creating manager\n");
-	int rc = uv__manager_init(&e->manager);
+	rc = launch_manager(&e->manager);
 	if (rc) abort();
-	uv_log("uv__executor_init: Created manager %x\n", e->manager.tid);
-	// Create a worker.
+	uv_log("uv__executor_init: Created manager %lu\n", e->manager.tid);
+
+	/* Create a worker. */
 	uv_log("uv__executor_init: Creating a new worker\n");
 	rc = uv__executor_new_worker(e);
-	uv_log("uv__executor_init: Creating worker %x\n", e->worker->tid);
+	uv_log("uv__executor_init: Created worker %lu\n", e->worker->tid);
 	if (rc) abort();
+	return 0;
 }
 
 int uv__executor_join (uv__executor_t *e) {
-	// TODO The last of my worries.
+	/* TODO Need to implement this or else workers will still contend for locks. */
 	uv_log("uv__executor_join: Entry\n");
-	return -1;
+	return 0;
 }
 
 int uv__executor_new_worker (uv__executor_t *e) {
+	int rc;
+	uv__worker_t *worker = NULL;
+	uv__executor_channel_t *channel = NULL;
+
 	if (e == NULL) abort();
 
 	uv_log("uv__executor_new_worker: Entry\n");
 
-	// Allocate worker and channel.
-	uv__worker_t *worker = (uv__worker_t *) uv__malloc(sizeof(*worker));
+	/* Allocate worker and channel. */
+	worker = (uv__worker_t *) uv__malloc(sizeof(*worker));
 	if (worker == NULL) abort();
 
-	uv__executor_channel_t *channel = uv__executor_channel_create(&e->mgr.async);
+	channel = uv__executor_channel_create(&e->manager.async);
   if (channel == NULL) abort();
 
 	uv_log("uv__executor_new_worker: worker %p channel %p\n", worker, channel);
 
-	// Update manager. Safe because:
-  //    1. worker has not yet started (so manager is blocked in uv_run)
-  // or 
-  //    2. manager is calling us from uv__manager_timer and has already saved the mutex and started the hangman.
+	/* Update manager. Safe because:
+   *    1. worker has not yet started (so manager is blocked in uv_run)
+   *  or 
+   *    2. manager is calling us from uv__manager_timer and has already saved the mutex and started the hangman. */
 	e->manager.channel = channel;
 	e->manager.last_observed_work = NULL;
 
-	int rc = launch_worker(worker, channel);
+	e->worker = worker;
+	rc = launch_worker(worker, channel);
 	return rc;
 }
 
@@ -383,11 +371,10 @@ int uv__executor_new_worker (uv__executor_t *e) {
  * uv__manager_t
  ***************/
 
-int uv__manager_init (uv__manager_t *mgr) {
-	if (mgr_ == NULL) abort();
-	if (channel == NULL) abort();
-
+static int uv__manager_init (uv__manager_t *mgr) {
 	int rc;
+
+	if (mgr == NULL) abort();
 
 	mgr->tid = -1;
 
@@ -397,35 +384,45 @@ int uv__manager_init (uv__manager_t *mgr) {
 	rc = uv_async_init(&mgr->loop, &mgr->async, uv__manager_async);
 	if (rc) abort();
 
-	rc = uv_timer_init(&mgr->loop, &mgr->async, uv__manager_timer);
+	rc = uv_timer_init(&mgr->loop, &mgr->timer);
 	if (rc) abort();
 
-	mgr->closing = false;
+	mgr->closing = 0;
 	rc = uv_sem_init(&mgr->final_send_sent, 0);
 	if (rc) abort();
 
 	mgr->channel = NULL;
 	mgr->last_observed_work = NULL;
+	return 0;
 }
 
 int launch_manager (uv__manager_t *mgr) {
-	if (mgr_ == NULL) abort();
+	int rc;
+	
+	if (mgr == NULL) abort();
 
-	int rc = uv_thread_create(&mgr->tid, manager, mgr_);
-	uv_log("launch_manager: launched %x (rc %i)\n", mgr->tid, rc);
+	rc = uv__manager_init(mgr);
+	if (rc) abort();
+
+	rc = uv_thread_create(&mgr->tid, manager, mgr);
+	uv_log("launch_manager: launched %lu (rc %i)\n", mgr->tid, rc);
 	return rc;
 }
 
 void manager (void *arg) {
-	uv__manager_t *self = (uv__worker_t *) m;
+	int rc;
+	uv__executor_t *executor = NULL;
+	uv__manager_t *self = NULL;
+
+	self = (uv__manager_t *) arg;
 	assert(self != NULL);
 
-	int rc = uv_run(&self->loop, UV_RUN_DEFAULT);
+	rc = uv_run(&self->loop, UV_RUN_DEFAULT);
 	if (rc) abort();
 	uv_log("manager: uv_run returned, guess we're done\n");
 
 	uv_log("manager: cleaning up my worker\n");
-  uv__executor_t *executor = container_of(self, uv__executor_t, manager);
+  executor = container_of(self, uv__executor_t, manager);
 	launch_hangman(executor->worker, NULL, NULL);
 
 	uv_log("manager: closing my loop\n");
@@ -437,13 +434,15 @@ void manager (void *arg) {
 }
 
 void uv__manager_async (uv_async_t *handle) {
+	uv__manager_t *self = NULL;
+	int rc;
+	int valid_wakeup = 0;
+	uint64_t timeout_ms = 0;
+
 	if (handle == NULL) abort();
-  uv__manager_t *self = container_of(handle, uv__manager_t, async);
+  self = container_of(handle, uv__manager_t, async);
 
 	uv_log("uv__manager_async: got async\n");
-
-	bool valid_wakeup = false;
-	int rc;
 
 	/* async comes from three places:
    *  1. Worker, work done
@@ -451,28 +450,28 @@ void uv__manager_async (uv_async_t *handle) {
    *  3. Executor, closing */
 
 	uv_mutex_lock(&self->channel->mutex);
-		// Did the worker wake us up?
+		/* Did the worker wake us up? */
 
-		if (channel->curr_work == NULL) {
-			// 1. Work done.
-			valid_wakeup = true;
+		if (self->channel->curr_work == NULL) {
+			/* 1. Work done. */
+			valid_wakeup = 1;
 			uv_log("uv__manager_async: worker finished work, stopping timer\n");
 			rc = uv_timer_stop(&self->timer);
 			if (rc) abort();
 		}
 		else {
-			if (channel->curr_work != self->last_observed_work) {
-				// 2. New work
-				valid_wakeup == true;
-				uv_log("uv__manager_async: worker found new work. It is working on %p, I last saw %p\n", channel->curr_work, self->last_observed_work);
+			if (self->channel->curr_work != self->last_observed_work) {
+				/* 2. New work */
+				valid_wakeup = 1;
+				uv_log("uv__manager_async: worker found new work. It is working on %p, I last saw %p\n", self->channel->curr_work, self->last_observed_work);
 
-				// Reset the timer.
+				/* Reset the timer. */
 				uv_log("uv__manager_async: Starting a timer\n");
 				rc = uv_timer_stop(&self->timer);
 				if (rc) abort();
 
-				// TODO Choose timeout somehow, e.g. from input or from env var.
-				uint64_t timeout_ms = 1*1000; /* 1 second */
+				/* TODO Choose timeout somehow, e.g. from input or from env var. */
+				timeout_ms = 1*1000; /* 1 second */
 				rc = uv_timer_start(&self->timer, uv__manager_timer, timeout_ms, 0);
 				if (rc) abort();
 			}
@@ -480,16 +479,17 @@ void uv__manager_async (uv_async_t *handle) {
 				uv_log("uv__manager_async: worker is still working on the same work, it must not have woken me\n");
 			}
 		}
-		self->last_observed_work = channel->curr_work; // Update observation.
+		self->last_observed_work = self->channel->curr_work; /* Update observation. */
 	uv_mutex_unlock(&self->channel->mutex);
 
 	if (self->closing) {
-		// 3. Executor, closing
-		valid_wakeup = true;
+		/* 3. Executor, closing */
+		valid_wakeup = 1;
 		uv_log("uv__manager_async: closing, so closing my handles\n");
 		uv_sem_wait(&self->final_send_sent);
-		uv_close(&self->async, NULL);
-		uv_close(&self->timer, NULL);
+		uv_close((uv_handle_t *) &self->async, NULL);
+		(void) uv_timer_stop(&self->timer);
+		uv_close((uv_handle_t *) &self->timer, NULL);
 	}
 
 	if (!valid_wakeup) abort();
@@ -498,30 +498,34 @@ void uv__manager_async (uv_async_t *handle) {
 }
 
 void uv__manager_timer (uv_timer_t *handle) {
+	int rc;
+  uv__manager_t *self = NULL;
+  uv__executor_t *executor = NULL;
+	uv_mutex_t *channel_mutex = NULL;
+	uv_work_t *work_req = NULL;
+	void *hangman_data = NULL;
+	uint64_t grace_period_ms = 0;
+
 	if (handle == NULL) abort();
-  uv__manager_t *self = container_of(handle, uv__manager_t, timer);
-  uv__executor_t *executor = container_of(self, uv__executor_t, manager);
+  self = container_of(handle, uv__manager_t, timer);
+  executor = container_of(self, uv__executor_t, manager);
 	uv_log("uv__manager_timer: got timer\n");
 
-	int rc;
-
-	// If we abort the Worker, we create a new channel. Remember the old channel's mutex's address.
-	uv_mutex_t *channel_mutex = (&mgr->channel->mutex);
+	/* If we abort the Worker, we create a new channel. Remember the old channel's mutex's address. */
+	channel_mutex = (&self->channel->mutex);
 
 	uv_mutex_lock(channel_mutex);
 		if (self->last_observed_work == self->channel->curr_work) {
-			// Still working on same work as last time, a legitimate timeout.
+			/* Still working on same work as last time, a legitimate timeout. */
 			uv_log("uv__manager_timer: got timer, worker still working on same work.\n");
 
-			// Inform owner that his task has timed out. See what response he wants.
+			/* Inform owner that his task has timed out. See what response he wants. */
 			uv_log("uv__manager_timer: Calling timed_out_cb to see what to do\n");
-			uv_work_t *req = container_of(self->last_observed_work, uv_work_t, work_req);
-			void *hangman_data = NULL;
-			uint64_t grace_period_ms = 0;
-			if (req->timed_out_cb)
-				grace_period_ms = req->timed_out_cb(req, &hangman_data);
+			work_req = container_of(self->last_observed_work, uv_work_t, work_req);
+			if (work_req->timed_out_cb)
+				grace_period_ms = work_req->timed_out_cb(work_req, &hangman_data);
 			if (grace_period_ms) {
-				// Reset timer for the grace period.
+				/* Reset timer for the grace period. */
 				uv_log("uv__manager_timer: timed_out cb requested grace period of %llu ms. Resetting timer.\n", grace_period_ms);
 				rc = uv_timer_stop(&self->timer);
 				if (rc) abort();
@@ -529,14 +533,14 @@ void uv__manager_timer (uv_timer_t *handle) {
 				if (rc) abort();
 			}
 			else {
-				// Owner agrees we can time out the request. Hangman.
+				/* Owner agrees we can time out the request. Hangman. */
 				uv_log("uv__manager_timer: No grace period requested. Launching hangman.\n");
-				mgr->channel->timed_out = true;
-				// Hangman gets the old worker, so it can clean up the associated memory allocated in uv__executor_new_worker.
-				launch_hangman(executor->worker, hangman_data, req->killed_cb);
+				self->channel->timed_out = 1;
+				/* Hangman gets the old worker, so it can clean up the associated memory allocated in uv__executor_new_worker. */
+				launch_hangman(executor->worker, hangman_data, work_req->killed_cb);
 		
-				// Since we are still holding the channel mutex, we are guaranteed that the worker won't call uv_async_send again. Safe to give a new Worker this async without confusion.
-				mgr->last_observed_work = NULL;
+				/* Since we are still holding the channel mutex, we are guaranteed that the worker won't call uv_async_send again. Safe to give a new Worker this async without confusion. */
+				self->last_observed_work = NULL;
 
 				uv_log("uv__manager_timer: Creating new worker\n");
 				rc = uv__executor_new_worker(executor);
@@ -545,7 +549,7 @@ void uv__manager_timer (uv_timer_t *handle) {
 			}
 		}
 		else {
-			// Timer expired but work has changed. NBD.
+			/* Timer expired but work has changed. NBD. */
 			uv_log("uv__manager_timer: got timer, but it looks like the worker finished the work already. Doing nothing.\n");
 		}
 	uv_mutex_unlock(channel_mutex);
@@ -558,12 +562,14 @@ void uv__manager_timer (uv_timer_t *handle) {
  ***************/
 
 int launch_worker (uv__worker_t *worker_, uv__executor_channel_t *channel) {
+	int rc;
+
 	if (worker_ == NULL) abort();
 	if (channel == NULL) abort();
 
 	worker_->channel = channel;
-	int rc = uv_thread_create(&worker->tid, worker, worker_);
-	uv_log("launch_worker: launched %x (rc %i)\n", worker->tid, rc);
+	rc = uv_thread_create(&worker_->tid, worker, worker_);
+	uv_log("launch_worker: launched %lu (rc %i)\n", worker_->tid, rc);
 	return rc;
 }
 
@@ -606,38 +612,38 @@ void worker (void *arg) {
 		uv_log("worker: Got work %p\n", w);
 
 		uv_mutex_lock(&self->channel->mutex);
-			// Check if we timed out.
-			if (w->timed_out) {
+			/* Check if we timed out. */
+			if (self->channel->timed_out) {
 				uv_log("worker: Timed out??\n");
 				uv_mutex_unlock(&self->channel->mutex);
-				abort(); // TODO Re-queue w and return, but this is really unlikely.	
+				abort(); /* TODO Re-queue w and return, but this is really unlikely.	 */
 			}
 
-			// Tell manager we have a new task
+			/* Tell manager we have a new task */
 			uv_log("worker: Telling manager we have new work\n");
 			self->channel->curr_work = w;
 			uv_async_send(self->channel->async);
 		uv_mutex_unlock(&self->channel->mutex);
 
-		// Do the work
+		/* Do the work */
     w->work(w);
 
 		uv_mutex_lock(&self->channel->mutex);
-			// Check if we timed out.
+			/* Check if we timed out. */
 			if (self->channel->timed_out) {
-				// There's a hangman out for our blood.
-				// He will clean up our corpse.
+				/* There's a hangman out for our blood.
+				 * He will clean up our corpse. */
 				uv_log("worker: Timed out, returning\n");
 				uv_mutex_unlock(&self->channel->mutex);
 				return;
 			}
 
-			// Tell manager we finished our task.
+			/* Tell manager we finished our task. */
 			self->channel->curr_work = NULL;
 			uv_async_send(self->channel->async);
 		uv_mutex_unlock(&self->channel->mutex);
 
-		// Prepare for next task.
+		/* Prepare for next task. */
     uv_mutex_lock(&w->loop->wq_mutex);
 
     w->work = NULL;  /* Signal uv_cancel() that the work req is done
@@ -656,53 +662,59 @@ void worker (void *arg) {
  ***************/
 
 void launch_hangman (uv__worker_t *victim, void *data, uv_killed_cb cb) {
-	uv__hangman_t *hangman_ = uv__malloc(sizeof(*hangman));
-	if (hangman == NULL) abort()
+	int rc;
+	uv__hangman_t *hangman_ = NULL;
+
+	hangman_ = uv__malloc(sizeof(*hangman_));
+	if (hangman_ == NULL) abort();
 
 	uv_log("launch_hangman: victim %p data %p\n", victim, data);
 
 	hangman_->victim = victim;
 	hangman_->data = data;
-	hangman_->cb = cb;
+	hangman_->killed_cb = cb;
 
-	int rc = uv_thread_create(&hangman->self, hangman_, hangman);
+	rc = uv_thread_create(&hangman_->tid, hangman, hangman_);
 	if (rc) abort();
 	return;
 }
 
 void hangman (void *h) {
+	int rc;
+	uv__hangman_t *hangman_ = NULL;
+
 	uv_log("hangman: Entry\n");
-	uv__hangman_t *hangman_ = (uv__hangman_t *) h;
+	hangman_ = (uv__hangman_t *) h;
 	if (hangman_ == NULL) abort();
 
-	// Caller doesn't need to join() on us.
-	int rc = uv_thread_detach(&hangman_->self);
+	/* Caller doesn't need to join() on us. */
+	rc = uv_thread_detach(&hangman_->tid);
 	if (rc) abort();
 
 	if (hangman_->victim != NULL) {
-		// Cancel the victim.
-    // It might already have finished its task, seen channel->timed_out, and returned, so ignore the uv_thread_cancel rc.
+		/* Cancel the victim.
+     * It might already have finished its task, seen channel->timed_out, and returned, so ignore the uv_thread_cancel rc. */
 		uv_log("hangman: Cancel'ing victim %d\n", hangman_->victim->tid);
 		uv_thread_cancel(&hangman_->victim->tid);
 
-		// Join the victim.
+		/* Join the victim. */
 		uv_log("hangman: Joining victim worker %d\n", hangman_->victim->tid);
 		rc = uv_thread_join(&hangman_->victim->tid);
 		if (rc) abort();
 
-		// Call the cb if we have one.
+		/* Call the cb if we have one. */
 		if (hangman_->killed_cb != NULL) {
 			uv_log("hangman: Calling killed_cb with %p\n", hangman_->data);
 			hangman_->killed_cb(hangman_->data);
 		}
 		
-		// Clean up
+		/* Clean up */
 		uv_log("hangman: Releasing victim's channel and memory\n");
 		uv__executor_channel_destroy(hangman_->victim->channel);
 		uv__free(hangman_->victim);
 	}
 
-	// Clean up self
+	/* Clean up self */
 	uv__free(hangman_);
 
 	uv_log("hangman: Farewell\n");
@@ -714,8 +726,10 @@ void hangman (void *h) {
  ***************/
 
 uv__executor_channel_t * uv__executor_channel_create (uv_async_t *async) {
+	uv__executor_channel_t *ret = NULL;
+
 	if (async == NULL) abort();
-	uv__executor_channel_t *ret = uv__malloc(sizeof(*ret));
+	ret = uv__malloc(sizeof(*ret));
 	if (ret == NULL) abort();
 
 	ret->async = async;
@@ -723,7 +737,7 @@ uv__executor_channel_t * uv__executor_channel_create (uv_async_t *async) {
 		abort();
 
 	ret->curr_work = NULL;
-	ret->timed_out = false;
+	ret->timed_out = 0;
 
 	return ret;
 }

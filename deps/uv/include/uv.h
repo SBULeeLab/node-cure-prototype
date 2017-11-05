@@ -311,7 +311,7 @@ typedef void (*uv_exit_cb)(uv_process_t*, int64_t exit_status, int term_signal);
 typedef void (*uv_walk_cb)(uv_handle_t* handle, void* arg);
 typedef void (*uv_fs_cb)(uv_fs_t* req);
 typedef void (*uv_work_cb)(uv_work_t* req);
-typedef uint64_t (*uv_timed_out_cb)(uv_work_t* req, void** killed_arg); // Return 0 if we should kill, else return grace period in ms.
+typedef uint64_t (*uv_timed_out_cb)(uv_work_t* req, void** killed_arg); /* Return 0 if we should kill, else return grace period in ms. */
 typedef void (*uv_killed_cb)(void* arg);
 typedef void (*uv_after_work_cb)(uv_work_t* req, int status);
 typedef void (*uv_getaddrinfo_cb)(uv_getaddrinfo_t* req,
@@ -1476,6 +1476,7 @@ UV_EXTERN int uv_thread_create(uv_thread_t* tid, uv_thread_cb entry, void* arg);
 UV_EXTERN uv_thread_t uv_thread_self(void);
 UV_EXTERN int uv_thread_join(uv_thread_t *tid);
 UV_EXTERN int uv_thread_cancel(uv_thread_t *tid);
+UV_EXTERN int uv_thread_detach(uv_thread_t *tid);
 UV_EXTERN int uv_thread_equal(const uv_thread_t* t1, const uv_thread_t* t2);
 
 /* The presence of these unions force similar struct layout. */
