@@ -186,9 +186,12 @@ int uv_getaddrinfo(uv_loop_t* loop,
   if (hints)
     memcpy(&req->buf->hints, hints, sizeof(*hints));
   if (service)
-    memcpy(req->buf->service, service, service_len);
+    strncpy(req->buf->service, service, service_len);
   if (hostname)
-    memcpy(req->buf->hostname, hostname, hostname_len);
+    strncpy(req->buf->hostname, hostname, hostname_len);
+
+	req->buf->service[service_len] = '\0';
+	req->buf->hostname[hostname_len] = '\0';
 	req->buf->addrinfo = NULL;
 
   if (cb) {
