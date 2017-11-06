@@ -311,9 +311,12 @@ typedef void (*uv_exit_cb)(uv_process_t*, int64_t exit_status, int term_signal);
 typedef void (*uv_walk_cb)(uv_handle_t* handle, void* arg);
 typedef void (*uv_fs_cb)(uv_fs_t* req);
 typedef void (*uv_work_cb)(uv_work_t* req);
-typedef uint64_t (*uv_timed_out_cb)(uv_work_t* req, void **arg); /* Return 0 if we should kill, else return grace period in ms. If we should kill, set *arg for use with uv_killed_cb. */
+typedef uint64_t (*uv_timed_out_cb)(uv_work_t* req, void **arg); /* Return 0 if we should kill, else return grace period in ms.
+                                                                  * If we should kill, set *arg for use with uv_killed_cb.
+																																	* NOT INVOKED FROM THE MAIN THREAD, do not interact with uv_loop. */
 typedef void (*uv_after_work_cb)(uv_work_t* req, int status); /* Safe to delete req. On timeout, status is -ETIMEDOUT? On cancelled, status is UV_ECANCELED? */
-typedef void (*uv_killed_cb)(void *arg);
+typedef void (*uv_killed_cb)(void *arg); /* NOT INVOKED FROM THE MAIN THREAD, do not interact with uv_loop. */
+
 typedef void (*uv_getaddrinfo_cb)(uv_getaddrinfo_t* req,
                                   int status,
                                   struct addrinfo* res);

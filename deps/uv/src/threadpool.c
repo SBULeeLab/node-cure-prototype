@@ -318,7 +318,7 @@ static uint64_t uv__queue_timed_out(struct uv__work* w, void **dat) {
 	if (!w->state_assigned) abort();
 	if (w->state_done) abort();
 
-  ret = req->timed_out_cb(req, dat);
+  ret = req->timed_out_cb(req, dat); /* NOT INVOKED FROM MAIN THREAD. */
 	if (ret == 0)
 		w->state_timed_out = 1;
 	return ret;
@@ -821,7 +821,7 @@ void hangman (void *h) {
 		/* Call the killed_cb if we have one. */
 		if (hangman_->killed_cb != NULL) {
 			uv_log(1, "hangman: Calling killed_cb with %p\n", hangman_->killed_dat);
-			hangman_->killed_cb(hangman_->killed_dat);
+			hangman_->killed_cb(hangman_->killed_dat); /* NOT INVOKED FROM MAIN THREAD. */
 		}
 		
 		/* Clean up */
