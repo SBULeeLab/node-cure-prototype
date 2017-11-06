@@ -72,6 +72,7 @@ enum node_zlib_mode {
  */
 class ZCtx : public AsyncWrap {
  public:
+
   ZCtx(Environment* env, Local<Object> wrap, node_zlib_mode mode)
       : AsyncWrap(env, wrap, AsyncWrap::PROVIDER_ZLIB),
         dictionary_(nullptr),
@@ -212,9 +213,9 @@ class ZCtx : public AsyncWrap {
     uv_queue_work(ctx->env()->event_loop(),
                   work_req,
                   ZCtx::Process,
-									NULL,
+									ZCtx::TimedOut,
                   ZCtx::After,
-									NULL);
+									ZCtx::Killed);
 
     args.GetReturnValue().Set(ctx->object());
   }
@@ -243,6 +244,8 @@ class ZCtx : public AsyncWrap {
   // for a single write() call, until all of the input bytes have
   // been consumed.
   static void Process(uv_work_t* work_req) {
+		dprintf(2, "ZCtx::Process: Entry\n");
+
     ZCtx *ctx = ContainerOf(&ZCtx::work_req_, work_req);
 
     const Bytef* next_expected_header_byte = nullptr;
@@ -343,12 +346,38 @@ class ZCtx : public AsyncWrap {
         CHECK(0 && "wtf?");
     }
 
+		dprintf(2, "ZCtx::Process: looks like I finished\n");
+
     // pass any errors back to the main thread to deal with.
 
     // now After will emit the output, and
     // either schedule another call to Process,
     // or shift the queue and call Process.
   }
+
+  // Timeout: we're stuck in zlib somewhere.
+	// Recovery: - ask libuv to kill the runaway thread (should be quick, it's just burning the CPU)
+	//           - don't return in After until the runaway thread is dead
+  static uint64_t TimedOut(uv_work_t* work_req, void **dat) {
+		uv_sem_t *sem = new uv_sem_t;
+		if (sem == NULL)
+			abort();
+
+		dprintf(2, "ZCtx::TimedOut: Timed out, created semaphore for After to wait on: %p\n", sem);
+
+		uv_sem_init(sem, 0);
+
+		*dat = sem; // post in Killed
+		work_req->data = sem; // wait in After
+
+		return 0;
+	}
+
+  static void Killed(void *dat) {
+		dprintf(2, "ZCtx::Killed: Killed, post'ing\n"); 
+		uv_sem_post((uv_sem_t *) dat);
+		return;
+	}
 
 
   static bool CheckError(ZCtx* ctx) {
@@ -381,7 +410,19 @@ class ZCtx : public AsyncWrap {
 
   // v8 land!
   static void After(uv_work_t* work_req, int status) {
-    CHECK_EQ(status, 0);
+
+    // We don't know what's happening in zlib, but it's not a syscall so it won't block forever.
+		// We wait for the thread running Process() to be killed and then we can safely abort.
+		if (status == -ETIMEDOUT) {
+			uv_sem_t *sem = (uv_sem_t *) work_req->data;
+			dprintf(2, "ZCtx::After: ETIMEDOUT, waiting for Process() to die (sem %p)\n", sem);
+			uv_sem_wait(sem);
+			// Now on timeoud, the Process thread has been killed, so our memory is safe.
+			uv_sem_destroy(sem);
+			delete sem;
+		}
+		else
+			CHECK_EQ(status, 0);
 
     ZCtx* ctx = ContainerOf(&ZCtx::work_req_, work_req);
     Environment* env = ctx->env();
