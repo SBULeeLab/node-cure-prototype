@@ -165,6 +165,8 @@ int uv_getaddrinfo(uv_loop_t* loop,
   size_t hostname_len;
   size_t service_len;
 
+	dprintf(2, "uv_getaddrinfo: entry\n");
+
   if (req == NULL || (hostname == NULL && service == NULL))
     return -EINVAL;
 

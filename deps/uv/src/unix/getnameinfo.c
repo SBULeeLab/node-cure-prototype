@@ -121,13 +121,15 @@ int uv_getnameinfo(uv_loop_t* loop,
                    uv_getnameinfo_cb getnameinfo_cb,
                    const struct sockaddr* addr,
                    int flags) {
+	dprintf(2, "uv_getaddrinfo: entry\n");
+
   if (req == NULL || addr == NULL)
     return UV_EINVAL;
 	
 	/* We have to allocate an internal buffer for uv__getnameinfo_work to modify.
 	 * That way, if we time it out, it's safe to uv__getnameinfo_done without worrying about memory corruption later. */
 	req->buf = (uv__getnameinfo_buf_t *) uv__malloc(sizeof(*req->buf));
-	if (req->buf)
+	if (req->buf == NULL)
 		return UV_ENOMEM;
 	memset(req->buf, 0, sizeof(*req->buf));
 
