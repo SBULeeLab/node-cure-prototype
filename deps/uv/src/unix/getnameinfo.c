@@ -129,6 +129,7 @@ int uv_getnameinfo(uv_loop_t* loop,
 	req->buf = (uv__getnameinfo_buf_t *) uv__malloc(sizeof(*req->buf));
 	if (req->buf)
 		return UV_ENOMEM;
+	memset(req->buf, 0, sizeof(*req->buf));
 
   if (addr->sa_family == AF_INET) {
     memcpy(&req->buf->storage,

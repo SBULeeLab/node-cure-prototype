@@ -176,6 +176,7 @@ int uv_getaddrinfo(uv_loop_t* loop,
 	req->buf = (uv__getaddrinfo_buf_t *) uv__malloc(sizeof(*req->buf));
   if (req->buf == NULL)
     return -ENOMEM;
+	memset(req->buf, 0, sizeof(*req->buf));
 
   uv__req_init(loop, req, UV_GETADDRINFO);
   req->loop = loop;

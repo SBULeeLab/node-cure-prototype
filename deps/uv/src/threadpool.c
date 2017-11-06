@@ -774,7 +774,7 @@ void launch_hangman (uv__worker_t *victim,
 	hangman_ = uv__malloc(sizeof(*hangman_));
 	if (hangman_ == NULL) abort();
 
-	uv_log(1, "launch_hangman: victim %p\n", victim);
+	uv_log(1, "launch_hangman: victim %p killed_dat %p\n", victim, killed_dat);
 
 	hangman_->victim = victim;
 	hangman_->killed_cb = killed_cb;
