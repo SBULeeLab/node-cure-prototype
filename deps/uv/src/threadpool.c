@@ -104,6 +104,19 @@ static void uv__cancelled(struct uv__work* w) {
   abort();
 }
 
+static void queue_completed_work (struct uv__work *w) {
+	if (w == NULL) abort();
+
+	uv_mutex_lock(&w->loop->wq_mutex);
+
+	w->work = NULL;  /* Signal uv_cancel() that the work req is done
+											executing. */
+	QUEUE_INSERT_TAIL(&w->loop->wq, &w->wq);
+	uv_async_send(&w->loop->wq_async);
+	uv_mutex_unlock(&w->loop->wq_mutex);
+}
+
+
 static void post(QUEUE* q) {
   uv_mutex_lock(&mutex);
   QUEUE_INSERT_TAIL(&wq, q);
@@ -702,7 +715,7 @@ void worker (void *arg) {
 		/* We got work! */
     w = QUEUE_DATA(q, struct uv__work, wq);
 		uv_log(1, "worker: Got work %p\n", w);
-
+    
 		uv_mutex_lock(&self->channel->mutex);
 			/* Check if we timed out. */
 			if (self->channel->timed_out) {
@@ -719,6 +732,10 @@ void worker (void *arg) {
 
 		/* Do the work */
     w->work(w);
+		/* TODO RACE CONDITION. Our timer might have expired already. Need to synchronize better than 'self->channel->timed_out'.
+		 * However, since this depends on the timing of a syscall I'm guessing this will be a rare case. 
+		 * More likely is that on a hung syscall we only come here via uv_thread_cancel, *before* which self->channel->timed_out is set, and we return appropriately.
+		 * NB self and self->channel are not deallocated until we return. */
 		uv_log(1, "worker: Finished work\n");
 
 		uv_mutex_lock(&self->channel->mutex);
@@ -737,15 +754,9 @@ void worker (void *arg) {
 			uv_async_send(self->channel->async);
 		uv_mutex_unlock(&self->channel->mutex);
 
-		/* TODO Refactor since duplicated in hangman. */
 		/* Prepare for next task. */
-    uv_mutex_lock(&w->loop->wq_mutex);
-
-    w->work = NULL;  /* Signal uv_cancel() that the work req is done
-                        executing. */
-    QUEUE_INSERT_TAIL(&w->loop->wq, &w->wq);
-    uv_async_send(&w->loop->wq_async);
-    uv_mutex_unlock(&w->loop->wq_mutex);
+		uv_log(1, "worker: Signaling loop that task %p is done.\n", w);
+		queue_completed_work(w);
   }
 
 	uv_log(1, "worker: Farewell\n");
@@ -771,8 +782,15 @@ void launch_hangman (uv__worker_t *victim,
 	hangman_->killed_cb = killed_cb;
 	hangman_->killed_dat = killed_dat;
 
+	rc = uv_sem_init(&hangman_->done_with_w, 0);
+	if (rc) abort();
+
 	rc = uv_thread_create(&hangman_->tid, hangman, hangman_);
 	if (rc) abort();
+
+  uv_log(1, "launch_hangman: waiting for hangman to be done touching w\n");
+	uv_sem_wait(&hangman_->done_with_w);
+
 	return;
 }
 
@@ -792,21 +810,18 @@ void hangman (void *h) {
     /* If the victim was doing work, add it to the done queue so its done_cb can be called. */
 		struct uv__work *w = hangman_->victim->channel->curr_work;
 
-		/* TODO Refactor, duplicated code. */
-		/* Prepare for next task. */
 		if (w != NULL) {
+			/* Prepare for next task. */
 			uv_log(1, "hangman: Signaling loop that task %p is done.\n", w);
 			w->state_timed_out = 1;
-			uv_mutex_lock(&w->loop->wq_mutex);
-				w->work = NULL;  /* Signal uv_cancel() that the work req is done
-														executing. */
-				QUEUE_INSERT_TAIL(&w->loop->wq, &w->wq);
-				uv_async_send(&w->loop->wq_async);
-			uv_mutex_unlock(&w->loop->wq_mutex);
+			queue_completed_work(w);
 		}
 
+    /* Signal launch_hangman that it can return, making w invalid. */
+		uv_sem_post(&hangman_->done_with_w);
 		/* At this point w->loop's done_cb has fired (uv__work_done), so we can no longer safely access the uv_req_t/struct uv__work associated with the victim.
 		 * This is why we use a void *dat set by the timed_out_cb. */
+		hangman_->victim->channel->curr_work = NULL; /* Avoid temptation. */
 
 		/* Cancel the victim.
      * It might already have finished its task, seen channel->timed_out, and returned, so ignore the uv_thread_cancel rc. */
