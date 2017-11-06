@@ -16,7 +16,7 @@ fs.open('/dev/random', fs.constants.O_RDONLY, (err, fd) => {
 
 function doRead (fd, buf) {
 	fs.read(fd, buf, 0, 4096, 0, (err, data) => {
-		console.log(`Read ${i} complete`);
+		console.log(`JS: Read ${i} complete, err ${err}`);
 		i++;
 		setTimeout(()=>{
 			doRead(fd, buf);

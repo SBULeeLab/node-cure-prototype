@@ -7,4 +7,4 @@ var out = fs.createWriteStream('/tmp/raw.gz');
  
 console.log('JS: Piping /tmp/raw.dat into /tmp/raw.gz');
 inp.pipe(gzip).pipe(out);
-//console.log('JS: Done');
+console.log('JS: Done');

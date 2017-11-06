@@ -990,6 +990,7 @@ Local<Value> UVException(Isolate* isolate,
     js_msg = String::Concat(js_msg, FIXED_ONE_BYTE_STRING(isolate, "'"));
   }
 
+  /* TODO Use a TimeoutError if (errorno == (-???)ETIMEDOUT) */
   Local<Object> e = Exception::Error(js_msg)->ToObject(isolate);
 
   e->Set(env->errno_string(), Integer::New(isolate, errorno));

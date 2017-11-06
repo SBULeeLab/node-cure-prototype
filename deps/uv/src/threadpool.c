@@ -274,7 +274,14 @@ void uv__work_done(uv_async_t* handle) {
     QUEUE_REMOVE(q);
 
     w = container_of(q, struct uv__work, wq);
-    err = (w->work == uv__cancelled) ? UV_ECANCELED : 0;
+
+    /* Choose an appropriate err code. */
+		if (w->work == uv__cancelled)
+			err = UV_ECANCELED;
+		else if (w->state_timed_out)
+			err = UV_ETIMEDOUT;
+		else
+			err = 0;
 
     w->done(w, err);
   }
@@ -606,10 +613,12 @@ void uv__manager_timer (uv_timer_t *handle) {
 			uv_log(1, "uv__manager_timer: got timer, worker still working on same work.\n");
 
 			/* Inform owner that his task has timed out. See what response he wants. */
-			uv_log(1, "uv__manager_timer: Calling timed_out cb to see what to do\n");
 			grace_period_ms = 0;
-			if (work->timed_out)
+			if (work->timed_out) {
+				uv_log(1, "uv__manager_timer: Calling timed_out cb to see what to do\n");
 				grace_period_ms = work->timed_out(work);
+			}
+			uv_log(1, "uv__manager_timer: grace_period_ms %llu\n", grace_period_ms);
 
 			if (grace_period_ms) {
 				/* Reset timer for the grace period. */
@@ -622,7 +631,8 @@ void uv__manager_timer (uv_timer_t *handle) {
 			else {
 				/* Owner agrees we can time out the request. Hangman. */
 				uv_log(1, "uv__manager_timer: No grace period requested. Launching hangman.\n");
-				self->channel->timed_out = 1;
+		    work->state_timed_out = 1; /* Signal for uv__work_done. */
+				self->channel->timed_out = 1; /* Signal for worker. */
 				/* Hangman gets the old worker, so it can clean up the associated memory allocated in uv__executor_new_worker. */
 				launch_hangman(executor->worker, work->killed);
 		
@@ -733,6 +743,7 @@ void worker (void *arg) {
 			uv_async_send(self->channel->async);
 		uv_mutex_unlock(&self->channel->mutex);
 
+		/* TODO Refactor since duplicated in hangman. */
 		/* Prepare for next task. */
     uv_mutex_lock(&w->loop->wq_mutex);
 
@@ -782,6 +793,24 @@ void hangman (void *h) {
 	if (rc) abort();
 
 	if (hangman_->victim != NULL) {
+    /* If the victim was doing work, add it to the done queue so its done_cb can be called. */
+		struct uv__work *w = hangman_->victim->channel->curr_work;
+
+		/* TODO Refactor, duplicated code. */
+		/* Prepare for next task. */
+		if (w != NULL) {
+			uv_log(1, "hangman: Signaling loop that task %p is done.\n", w);
+			w->state_timed_out = 1;
+			uv_mutex_lock(&w->loop->wq_mutex);
+				w->work = NULL;  /* Signal uv_cancel() that the work req is done
+														executing. */
+				QUEUE_INSERT_TAIL(&w->loop->wq, &w->wq);
+				uv_async_send(&w->loop->wq_async);
+			uv_mutex_unlock(&w->loop->wq_mutex);
+		}
+
+		/* At this point w->loop's done_cb has fired (uv__work_done), so we can no longer safely access the uv_req_t/struct uv__work associated with the victim. */
+
 		/* Cancel the victim.
      * It might already have finished its task, seen channel->timed_out, and returned, so ignore the uv_thread_cancel rc. */
 		uv_log(1, "hangman: Cancel'ing victim %d\n", hangman_->victim->tid);
@@ -792,8 +821,9 @@ void hangman (void *h) {
 		rc = uv_thread_join(&hangman_->victim->tid);
 		if (rc) abort();
 
-		/* Call the cb if we have one. */
+		/* Call the killed_cb if we have one. */
 		if (hangman_->killed_cb != NULL) {
+			/* TODO Use a void *data instead. This is unsafe since we already called the victim's work's done_cb. */
 			struct uv__work *w = hangman_->victim->channel->curr_work;
 			uv_log(1, "hangman: Calling killed_cb with %p\n", w);
 			hangman_->killed_cb(w);

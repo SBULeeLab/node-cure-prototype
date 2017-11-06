@@ -121,7 +121,7 @@
 #define POST                                                                  \
   do {                                                                        \
     if (cb != NULL) {                                                         \
-      uv__work_submit(loop, &req->work_req, uv__fs_work, uv__fs_done, NULL, NULL);        \
+      uv__work_submit(loop, &req->work_req, uv__fs_work, uv__fs_done, uv__fs_timed_out, uv__fs_killed);        \
       return 0;                                                               \
     }                                                                         \
     else {                                                                    \
@@ -1120,10 +1120,32 @@ static void uv__fs_done(struct uv__work* w, int status) {
 
   if (status == -ECANCELED) {
     assert(req->result == 0);
-    req->result = -ECANCELED;
-  }
+		req->result = -ECANCELED;
+	}
 
   req->cb(req);
+}
+
+
+static uint64_t uv__fs_timed_out(struct uv__work* w) {
+  uv_fs_t* req;
+
+  req = container_of(w, uv_fs_t, work_req);
+
+  dprintf(2, "uv__fs_timed_out: work %p timed out\n", w);
+
+	/* Propagate to uv__fs_done. */
+	req->result = -ETIMEDOUT;
+
+	/* TODO Resource management policy. */
+
+  /* Tell threadpool to abort the Task. */
+	return 0;
+}
+
+
+static void uv__fs_killed(struct uv__work* w) {
+	/* TODO Resource management policy. */
 }
 
 
