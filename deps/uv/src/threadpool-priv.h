@@ -123,12 +123,13 @@ void uv__executor_channel_destroy (uv__executor_channel_t *channel);
 struct uv__hangman_s {
 	uv_thread_t tid;
 	uv__worker_t *victim;
-	void (*killed_cb)(struct uv__work *w);
+	void (*killed_cb)(void *dat);
+	void *killed_dat;
 };
 
-void launch_hangman (uv__worker_t *victim, void (*killed_cb)(struct uv__work *w));
+void launch_hangman (uv__worker_t *victim, void (*killed_cb)(void *dat), void *killed_dat);
 
 /* Entry point for a hangman. */
-void hangman (void *arg);
+void hangman (void *h);
 
 #endif /* UV_THREADPOOL_PRIV_H_ */

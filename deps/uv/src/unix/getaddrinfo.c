@@ -186,8 +186,8 @@ int uv_getaddrinfo(uv_loop_t* loop,
     uv__work_submit(loop,
                     &req->work_req,
                     uv__getaddrinfo_work,
-                    uv__getaddrinfo_done,
                     NULL,
+                    uv__getaddrinfo_done,
                     NULL);
     return 0;
   } else {

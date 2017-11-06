@@ -5470,8 +5470,8 @@ void PBKDF2(const FunctionCallbackInfo<Value>& args) {
     uv_queue_work(env->event_loop(),
                   req->work_req(),
                   PBKDF2Request::Work,
-                  PBKDF2Request::After,
 									NULL,
+                  PBKDF2Request::After,
 									NULL);
   } else {
     env->PrintSyncTrace();
@@ -5680,8 +5680,8 @@ void RandomBytes(const FunctionCallbackInfo<Value>& args) {
     uv_queue_work(env->event_loop(),
                   req->work_req(),
                   RandomBytesWork,
-                  RandomBytesAfter,
 									NULL,
+                  RandomBytesAfter,
 									NULL);
     args.GetReturnValue().Set(obj);
   } else {
@@ -5728,8 +5728,8 @@ void RandomBytesBuffer(const FunctionCallbackInfo<Value>& args) {
     uv_queue_work(env->event_loop(),
                   req->work_req(),
                   RandomBytesWork,
-                  RandomBytesAfter,
 									NULL,
+                  RandomBytesAfter,
 									NULL);
     args.GetReturnValue().Set(obj);
   } else {

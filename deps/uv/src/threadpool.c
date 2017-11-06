@@ -206,9 +206,9 @@ static void init_once(void) {
 void uv__work_submit(uv_loop_t* loop,
                      struct uv__work* w,
                      void (*work)(struct uv__work* w),
+                     uint64_t (*timed_out)(struct uv__work *w, void **killed_dat), /* See uv_timed_out_cb. */
                      void (*done)(struct uv__work* w, int status),
-                     uint64_t (*timed_out)(struct uv__work *w), /* See uv_timed_out_cb. */
-                     void (*killed)(struct uv__work *w)) { /* See uv_killed_cb. */
+                     void (*killed)(void *dat)) { /* See uv_killed_cb. */
   uv_once(&once, init_once);
   w->loop = loop;
   w->work = work;
@@ -220,7 +220,6 @@ void uv__work_submit(uv_loop_t* loop,
 	w->state_assigned = 0;
 	w->state_timed_out = 0;
 	w->state_done = 0;
-	w->state_killed = 0;
 	w->state_canceled = 0;
 
 	w->state_queued = 1;
@@ -301,7 +300,6 @@ static void uv__queue_done(struct uv__work* w, int err) {
   uv_work_t* req;
 
 	if (!w->state_assigned) abort();
-	if (w->state_killed) abort();
 	w->state_done = 1;
 
   req = container_of(w, uv_work_t, work_req);
@@ -313,25 +311,17 @@ static void uv__queue_done(struct uv__work* w, int err) {
   req->after_work_cb(req, err);
 }
 
-static uint64_t uv__queue_timed_out(struct uv__work* w) {
+static uint64_t uv__queue_timed_out(struct uv__work* w, void **dat) {
 	uint64_t ret;
   uv_work_t* req = container_of(w, uv_work_t, work_req);
 
 	if (!w->state_assigned) abort();
 	if (w->state_done) abort();
 
-  ret = req->timed_out_cb(req);
+  ret = req->timed_out_cb(req, dat);
 	if (ret == 0)
 		w->state_timed_out = 1;
 	return ret;
-}
-
-static void uv__queue_killed(struct uv__work* w) {
-  uv_work_t* req = container_of(w, uv_work_t, work_req);
-
-	if (!w->state_timed_out) abort();
-	w->state_killed = 1;
-  req->killed_cb(req);
 }
 
 /* External entrance into threadpool.
@@ -339,8 +329,8 @@ static void uv__queue_killed(struct uv__work* w) {
 int uv_queue_work(uv_loop_t* loop,
                   uv_work_t* req,
                   uv_work_cb work_cb,
-                  uv_after_work_cb after_work_cb,
 									uv_timed_out_cb timed_out_cb,
+                  uv_after_work_cb after_work_cb,
 									uv_killed_cb killed_cb) {
   if (work_cb == NULL)
     return UV_EINVAL;
@@ -351,7 +341,9 @@ int uv_queue_work(uv_loop_t* loop,
   req->after_work_cb = after_work_cb;
 	req->timed_out_cb = timed_out_cb;
 	req->killed_cb = killed_cb;
-  uv__work_submit(loop, &req->work_req, uv__queue_work, uv__queue_done, uv__queue_timed_out, uv__queue_killed);
+	/* We set the intermediate killed_cb to the input value because we call it after calling uv_after_work_cb.
+	 * The req may have been de-allocated by then. */
+  uv__work_submit(loop, &req->work_req, uv__queue_work, uv__queue_timed_out, uv__queue_done, killed_cb);
   return 0;
 }
 
@@ -515,7 +507,7 @@ void manager (void *arg) {
 
 	uv_log(1, "manager: cleaning up my worker\n");
   executor = container_of(self, uv__executor_t, manager);
-	launch_hangman(executor->worker, NULL);
+	launch_hangman(executor->worker, NULL, NULL);
 
 	uv_log(1, "manager: closing my loop\n");
 	rc = uv_loop_close(&self->loop);
@@ -597,6 +589,7 @@ void uv__manager_timer (uv_timer_t *handle) {
   uv__executor_t *executor = NULL;
 	uv_mutex_t *channel_mutex = NULL;
 	uint64_t grace_period_ms = 0;
+	void *killed_dat = NULL;
 
 	if (handle == NULL) abort();
   self = container_of(handle, uv__manager_t, timer);
@@ -614,9 +607,10 @@ void uv__manager_timer (uv_timer_t *handle) {
 
 			/* Inform owner that his task has timed out. See what response he wants. */
 			grace_period_ms = 0;
+			killed_dat = NULL;
 			if (work->timed_out) {
 				uv_log(1, "uv__manager_timer: Calling timed_out cb to see what to do\n");
-				grace_period_ms = work->timed_out(work);
+				grace_period_ms = work->timed_out(work, &killed_dat);
 			}
 			uv_log(1, "uv__manager_timer: grace_period_ms %llu\n", grace_period_ms);
 
@@ -630,11 +624,11 @@ void uv__manager_timer (uv_timer_t *handle) {
 			}
 			else {
 				/* Owner agrees we can time out the request. Hangman. */
-				uv_log(1, "uv__manager_timer: No grace period requested. Launching hangman.\n");
+				uv_log(1, "uv__manager_timer: No grace period requested. killed_dat %p. Launching hangman.\n", killed_dat);
 		    work->state_timed_out = 1; /* Signal for uv__work_done. */
 				self->channel->timed_out = 1; /* Signal for worker. */
 				/* Hangman gets the old worker, so it can clean up the associated memory allocated in uv__executor_new_worker. */
-				launch_hangman(executor->worker, work->killed);
+				launch_hangman(executor->worker, work->killed, killed_dat);
 		
 				/* Since we are still holding the channel mutex, we are guaranteed that the worker won't call uv_async_send again. Safe to give a new Worker this async without confusion. */
 				self->last_observed_work = NULL;
@@ -763,7 +757,8 @@ void worker (void *arg) {
  ***************/
 
 void launch_hangman (uv__worker_t *victim,
-                     void (*killed_cb)(struct uv__work *w)) {
+                     void (*killed_cb)(void *dat),
+										 void *killed_dat) {
 	int rc;
 	uv__hangman_t *hangman_ = NULL;
 
@@ -774,6 +769,7 @@ void launch_hangman (uv__worker_t *victim,
 
 	hangman_->victim = victim;
 	hangman_->killed_cb = killed_cb;
+	hangman_->killed_dat = killed_dat;
 
 	rc = uv_thread_create(&hangman_->tid, hangman, hangman_);
 	if (rc) abort();
@@ -809,24 +805,23 @@ void hangman (void *h) {
 			uv_mutex_unlock(&w->loop->wq_mutex);
 		}
 
-		/* At this point w->loop's done_cb has fired (uv__work_done), so we can no longer safely access the uv_req_t/struct uv__work associated with the victim. */
+		/* At this point w->loop's done_cb has fired (uv__work_done), so we can no longer safely access the uv_req_t/struct uv__work associated with the victim.
+		 * This is why we use a void *dat set by the timed_out_cb. */
 
 		/* Cancel the victim.
      * It might already have finished its task, seen channel->timed_out, and returned, so ignore the uv_thread_cancel rc. */
-		uv_log(1, "hangman: Cancel'ing victim %d\n", hangman_->victim->tid);
+		uv_log(1, "hangman: Cancel'ing victim %lld\n", hangman_->victim->tid);
 		uv_thread_cancel(&hangman_->victim->tid);
 
 		/* Join the victim. */
-		uv_log(1, "hangman: Joining victim worker %d\n", hangman_->victim->tid);
+		uv_log(1, "hangman: Joining victim worker %lld\n", hangman_->victim->tid);
 		rc = uv_thread_join(&hangman_->victim->tid);
 		if (rc) abort();
 
 		/* Call the killed_cb if we have one. */
 		if (hangman_->killed_cb != NULL) {
-			/* TODO Use a void *data instead. This is unsafe since we already called the victim's work's done_cb. */
-			struct uv__work *w = hangman_->victim->channel->curr_work;
-			uv_log(1, "hangman: Calling killed_cb with %p\n", w);
-			hangman_->killed_cb(w);
+			uv_log(1, "hangman: Calling killed_cb with %p\n", hangman_->killed_dat);
+			hangman_->killed_cb(hangman_->killed_dat);
 		}
 		
 		/* Clean up */

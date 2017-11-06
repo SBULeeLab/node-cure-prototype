@@ -212,8 +212,8 @@ class ZCtx : public AsyncWrap {
     uv_queue_work(ctx->env()->event_loop(),
                   work_req,
                   ZCtx::Process,
-                  ZCtx::After,
 									NULL,
+                  ZCtx::After,
 									NULL);
 
     args.GetReturnValue().Set(ctx->object());

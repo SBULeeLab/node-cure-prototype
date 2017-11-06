@@ -110,8 +110,8 @@ int uv_getnameinfo(uv_loop_t* loop,
     uv__work_submit(loop,
                     &req->work_req,
                     uv__getnameinfo_work,
-                    uv__getnameinfo_done,
                     NULL,
+                    uv__getnameinfo_done,
                     NULL);
     return 0;
   } else {

@@ -29,9 +29,9 @@
 
 struct uv__work {
   void (*work)(struct uv__work *w); /* Set to NULL when work() returns. */
+	uint64_t (*timed_out)(struct uv__work *w, void **dat); /* See uv_timed_out_cb. */
   void (*done)(struct uv__work *w, int status);
-	uint64_t (*timed_out)(struct uv__work *w); /* See uv_timed_out_cb. */
-	void (*killed)(struct uv__work *w); /* See uv_killed_cb. */
+	void (*killed)(void *dat); /* See uv_killed_cb. */
   struct uv_loop_s* loop;
   void* wq[2]; /* QUEUE_EMPTY(&wq) when work() is active. */
 
@@ -41,7 +41,6 @@ struct uv__work {
 	int state_assigned;
 	int state_timed_out;
 	int state_done;
-	int state_killed;
 	int state_canceled;
 };
 
