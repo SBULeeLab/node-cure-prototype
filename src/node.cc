@@ -991,7 +991,11 @@ Local<Value> UVException(Isolate* isolate,
   }
 
   /* TODO Use a TimeoutError if (errorno == (-???)ETIMEDOUT) */
-  Local<Object> e = Exception::Error(js_msg)->ToObject(isolate);
+  Local<Object> e;
+	if (errorno == -ETIMEDOUT)
+		e = Exception::TimeoutError(js_msg)->ToObject(isolate);
+	else
+		e = Exception::Error(js_msg)->ToObject(isolate);
 
   e->Set(env->errno_string(), Integer::New(isolate, errorno));
   e->Set(env->code_string(), js_code);
