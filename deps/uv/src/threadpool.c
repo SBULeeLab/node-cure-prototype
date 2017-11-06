@@ -878,3 +878,4 @@ void uv__executor_channel_destroy (uv__executor_channel_t *channel) {
 	uv__free(channel);
 }
 
+// TODO Need to uv_mutex_destroy and uv_sem_destroy everything.
