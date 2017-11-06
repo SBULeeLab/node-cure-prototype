@@ -98,6 +98,21 @@ struct uv__io_s {
   UV_IO_PRIVATE_PLATFORM_FIELDS
 };
 
+typedef struct uv__getnameinfo_buf_s uv__getnameinfo_buf_t;
+struct uv__getnameinfo_buf_s {
+  struct sockaddr_storage storage;
+  char host[NI_MAXHOST];
+  char service[NI_MAXSERV];
+};
+
+typedef struct uv__getaddrinfo_buf_s uv__getaddrinfo_buf_t;
+struct uv__getaddrinfo_buf_s {
+  struct addrinfo hints;
+  char service[NI_MAXSERV];
+  char hostname[NI_MAXHOST];
+  struct addrinfo* addrinfo;
+};
+
 #ifndef UV_PLATFORM_SEM_T
 # define UV_PLATFORM_SEM_T sem_t
 #endif
@@ -308,16 +323,14 @@ typedef struct {
 #define UV_GETADDRINFO_PRIVATE_FIELDS                                         \
   struct uv__work work_req;                                                   \
   uv_getaddrinfo_cb cb;                                                       \
-  struct addrinfo* hints;                                                     \
-  char* hostname;                                                             \
-  char* service;                                                              \
+  uv__getaddrinfo_buf_t *buf;                                                 \
   struct addrinfo* addrinfo;                                                  \
   int retcode;
 
 #define UV_GETNAMEINFO_PRIVATE_FIELDS                                         \
   struct uv__work work_req;                                                   \
   uv_getnameinfo_cb getnameinfo_cb;                                           \
-  struct sockaddr_storage storage;                                            \
+  uv__getnameinfo_buf_t *buf;                                                 \
   int flags;                                                                  \
   char host[NI_MAXHOST];                                                      \
   char service[NI_MAXSERV];                                                   \

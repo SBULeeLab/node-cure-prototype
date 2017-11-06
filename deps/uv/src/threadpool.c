@@ -225,7 +225,7 @@ void uv__work_submit(uv_loop_t* loop,
   uv_once(&once, init_once);
   w->loop = loop;
   w->work = work;
-	w->timed_out= timed_out;
+	w->timed_out = timed_out;
   w->done = done;
 	w->killed = killed;
 

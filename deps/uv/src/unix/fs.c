@@ -1124,7 +1124,7 @@ static uint64_t uv__fs_timed_out(struct uv__work* w, void **dat) {
 
 	/* TODO Resource management policy. */
 	/* No recovery data for now, but we should save the fd(s), look up the associated inodes, blacklist them, and allocate a structure to repair this later in uv__fs_killed. */
-	*dat = NULL;
+	*dat = 0xdeadbeef; /* Just for debugging purposes. */
   /* Tell threadpool to abort the Task. */
 	return 0;
 }
@@ -1139,6 +1139,9 @@ static void uv__fs_done(struct uv__work* w, int status) {
   if (status == -ECANCELED) {
     assert(req->result == 0);
 		req->result = -ECANCELED;
+	}
+	else if (status == -ETIMEDOUT) {
+		req->result = -ETIMEDOUT;
 	}
 
   req->cb(req);

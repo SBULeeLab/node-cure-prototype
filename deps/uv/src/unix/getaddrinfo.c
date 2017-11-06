@@ -99,10 +99,28 @@ static void uv__getaddrinfo_work(struct uv__work* w) {
   int err;
 
   req = container_of(w, uv_getaddrinfo_t, work_req);
-  err = getaddrinfo(req->hostname, req->service, req->hints, &req->addrinfo);
+  err = getaddrinfo(req->buf->hostname, req->buf->service, &req->buf->hints, &req->buf->addrinfo);
   req->retcode = uv__getaddrinfo_translate_error(err);
 }
 
+static uint64_t uv__getaddrinfo_timed_out (struct uv__work* w, void **dat) {
+  uv_getaddrinfo_t* req;
+
+  req = container_of(w, uv_getaddrinfo_t, work_req);
+
+  dprintf(2, "uv__getaddrinfo_timed_out: work %p dat %p timed out\n", w, dat);
+
+	/* Propagate to uv__getaddrinfo_done. */
+	req->retcode = -ETIMEDOUT;
+
+	/* getaddrinfo is read-only.
+	 * However, the runaway uv__getaddrinfo_work may continue to modify the buf,
+	 * so we have to free the memory once it is killed. */
+	*dat = req->buf;
+
+  /* Tell threadpool to abort the Task. */
+	return 0;
+}
 
 static void uv__getaddrinfo_done(struct uv__work* w, int status) {
   uv_getaddrinfo_t* req;
@@ -110,27 +128,31 @@ static void uv__getaddrinfo_done(struct uv__work* w, int status) {
   req = container_of(w, uv_getaddrinfo_t, work_req);
   uv__req_unregister(req->loop, req);
 
-  /* See initialization in uv_getaddrinfo(). */
-  if (req->hints)
-    uv__free(req->hints);
-  else if (req->service)
-    uv__free(req->service);
-  else if (req->hostname)
-    uv__free(req->hostname);
-  else
-    assert(0);
-
-  req->hints = NULL;
-  req->service = NULL;
-  req->hostname = NULL;
-
   if (status == -ECANCELED) {
     assert(req->retcode == 0);
     req->retcode = UV_EAI_CANCELED;
   }
+	else if (status == -ETIMEDOUT) {
+		assert(req->retcode == -ETIMEDOUT);
+	}
+	else {
+		req->addrinfo = req->buf->addrinfo;
+	}
+
+  /* If we aren't timed out, we have to clean up our buf. */
+	if (req->retcode != -ETIMEDOUT)
+		uv__free(req->buf);
 
   if (req->cb)
     req->cb(req, req->retcode, req->addrinfo);
+}
+
+static void uv__getaddrinfo_killed(void *dat) {
+	uv__getaddrinfo_buf_t *buf = (uv__getaddrinfo_buf_t *) dat;
+
+	/* Resource management: Free the buf. */
+	dprintf(2, "uv__getaddrinfo_killed: Freeing %p\n", dat);
+	uv__free(buf);
 }
 
 
@@ -142,55 +164,43 @@ int uv_getaddrinfo(uv_loop_t* loop,
                    const struct addrinfo* hints) {
   size_t hostname_len;
   size_t service_len;
-  size_t hints_len;
-  size_t len;
-  char* buf;
 
   if (req == NULL || (hostname == NULL && service == NULL))
     return -EINVAL;
 
   hostname_len = hostname ? strlen(hostname) + 1 : 0;
   service_len = service ? strlen(service) + 1 : 0;
-  hints_len = hints ? sizeof(*hints) : 0;
-  buf = uv__malloc(hostname_len + service_len + hints_len);
+	if (NI_MAXHOST <= hostname_len || NI_MAXSERV <= service_len)
+		return -EINVAL;
 
-  if (buf == NULL)
+	req->buf = (uv__getaddrinfo_buf_t *) uv__malloc(sizeof(*req->buf));
+  if (req->buf == NULL)
     return -ENOMEM;
 
   uv__req_init(loop, req, UV_GETADDRINFO);
   req->loop = loop;
   req->cb = cb;
   req->addrinfo = NULL;
-  req->hints = NULL;
-  req->service = NULL;
-  req->hostname = NULL;
   req->retcode = 0;
 
-  /* order matters, see uv_getaddrinfo_done() */
-  len = 0;
-
-  if (hints) {
-    req->hints = memcpy(buf + len, hints, sizeof(*hints));
-    len += sizeof(*hints);
-  }
-
-  if (service) {
-    req->service = memcpy(buf + len, service, service_len);
-    len += service_len;
-  }
-
+  if (hints)
+    memcpy(&req->buf->hints, hints, sizeof(*hints));
+  if (service)
+    memcpy(req->buf->service, service, service_len);
   if (hostname)
-    req->hostname = memcpy(buf + len, hostname, hostname_len);
+    memcpy(req->buf->hostname, hostname, hostname_len);
+	req->buf->addrinfo = NULL;
 
   if (cb) {
     uv__work_submit(loop,
                     &req->work_req,
                     uv__getaddrinfo_work,
-                    NULL,
+                    uv__getaddrinfo_timed_out,
                     uv__getaddrinfo_done,
-                    NULL);
+                    uv__getaddrinfo_killed);
     return 0;
   } else {
+		abort(); /* Node does not offer a synchronous API, make sure this never happens. */
     uv__getaddrinfo_work(&req->work_req);
     uv__getaddrinfo_done(&req->work_req, 0);
     return req->retcode;

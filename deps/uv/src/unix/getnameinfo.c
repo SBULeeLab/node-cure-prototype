@@ -35,21 +35,40 @@ static void uv__getnameinfo_work(struct uv__work* w) {
 
   req = container_of(w, uv_getnameinfo_t, work_req);
 
-  if (req->storage.ss_family == AF_INET)
+  if (req->buf->storage.ss_family == AF_INET)
     salen = sizeof(struct sockaddr_in);
-  else if (req->storage.ss_family == AF_INET6)
+  else if (req->buf->storage.ss_family == AF_INET6)
     salen = sizeof(struct sockaddr_in6);
   else
     abort();
 
-  err = getnameinfo((struct sockaddr*) &req->storage,
+  err = getnameinfo((struct sockaddr*) &req->buf->storage,
                     salen,
-                    req->host,
-                    sizeof(req->host),
-                    req->service,
-                    sizeof(req->service),
+                    req->buf->host,
+                    sizeof(req->buf->host),
+                    req->buf->service,
+                    sizeof(req->buf->service),
                     req->flags);
   req->retcode = uv__getaddrinfo_translate_error(err);
+}
+
+static uint64_t uv__getnameinfo_timed_out (struct uv__work* w, void **dat) {
+  uv_getnameinfo_t* req;
+
+  req = container_of(w, uv_getnameinfo_t, work_req);
+
+  dprintf(2, "uv__getnameinfo_timed_out: work %p dat %p timed out\n", w, dat);
+
+	/* Propagate to uv__getnameinfo_done. */
+	req->retcode = -ETIMEDOUT;
+
+	/* getnameinfo is read-only.
+	 * However, the runaway uv__getnameinfo_work may continue to modify the buf,
+	 * so we have to free the memory once it is killed. */
+	*dat = req->buf;
+
+  /* Tell threadpool to abort the Task. */
+	return 0;
 }
 
 static void uv__getnameinfo_done(struct uv__work* w, int status) {
@@ -64,13 +83,32 @@ static void uv__getnameinfo_done(struct uv__work* w, int status) {
   if (status == -ECANCELED) {
     assert(req->retcode == 0);
     req->retcode = UV_EAI_CANCELED;
-  } else if (req->retcode == 0) {
-    host = req->host;
-    service = req->service;
   }
+	else if (status == -ETIMEDOUT) {
+		assert(req->retcode == -ETIMEDOUT);
+  }
+  else if (req->retcode == 0) {
+		memcpy(req->host, req->buf->host, sizeof(req->buf->host));
+		host = req->host;
+
+		memcpy(req->service, req->buf->service, sizeof(req->buf->service));
+		service = req->service;
+  }
+
+  /* If we aren't timed out, we have to clean up our buf. */
+	if (req->retcode != -ETIMEDOUT)
+		uv__free(req->buf);
 
   if (req->getnameinfo_cb)
     req->getnameinfo_cb(req, req->retcode, host, service);
+}
+
+static void uv__getnameinfo_killed(void *dat) {
+	uv__getnameinfo_buf_t *buf = (uv__getnameinfo_buf_t *) dat;
+
+	/* Resource management: Free the buf. */
+	dprintf(2, "uv__getnameinfo_killed: Freeing %p\n", dat);
+	uv__free(buf);
 }
 
 /*
@@ -85,13 +123,19 @@ int uv_getnameinfo(uv_loop_t* loop,
                    int flags) {
   if (req == NULL || addr == NULL)
     return UV_EINVAL;
+	
+	/* We have to allocate an internal buffer for uv__getnameinfo_work to modify.
+	 * That way, if we time it out, it's safe to uv__getnameinfo_done without worrying about memory corruption later. */
+	req->buf = (uv__getnameinfo_buf_t *) uv__malloc(sizeof(*req->buf));
+	if (req->buf)
+		return UV_ENOMEM;
 
   if (addr->sa_family == AF_INET) {
-    memcpy(&req->storage,
+    memcpy(&req->buf->storage,
            addr,
            sizeof(struct sockaddr_in));
   } else if (addr->sa_family == AF_INET6) {
-    memcpy(&req->storage,
+    memcpy(&req->buf->storage,
            addr,
            sizeof(struct sockaddr_in6));
   } else {
@@ -110,11 +154,12 @@ int uv_getnameinfo(uv_loop_t* loop,
     uv__work_submit(loop,
                     &req->work_req,
                     uv__getnameinfo_work,
-                    NULL,
+                    uv__getnameinfo_timed_out,
                     uv__getnameinfo_done,
-                    NULL);
+                    uv__getnameinfo_killed);
     return 0;
   } else {
+		abort(); /* Node does not offer a synchronous API, make sure this never happens. */
     uv__getnameinfo_work(&req->work_req);
     uv__getnameinfo_done(&req->work_req, 0);
     return req->retcode;
