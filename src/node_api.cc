@@ -3416,7 +3416,9 @@ napi_status napi_queue_async_work(napi_env env, napi_async_work work) {
   CALL_UV(env, uv_queue_work(event_loop,
                              w->Request(),
                              uvimpl::Work::ExecuteCallback,
-                             uvimpl::Work::CompleteCallback));
+                             uvimpl::Work::CompleteCallback,
+														 NULL,
+														 NULL));
 
   return napi_clear_last_error(env);
 }

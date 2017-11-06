@@ -8,8 +8,6 @@
 
 #include "uv-threadpool.h"
 
-typedef struct uv__work uv__work_t;
-
 /* Forward declarations. */
 typedef struct uv__executor_s uv__executor_t;
 typedef struct uv__manager_s uv__manager_t;
@@ -32,7 +30,7 @@ struct uv__manager_s {
 	uv_timer_t timer;
 
 	uv__executor_channel_t *channel; /* Executor sets this when it creates a new worker. */
-	uv__work_t *last_observed_work; /* Do not dereference this! */
+	struct uv__work *last_observed_work; /* Do not dereference this! */
 
 	/* When executor is closing, it sends to the manager, which should then wait on the sem until it knows it's safe to close the async handle. Note the sem is needed because we could set closing in executor, then worker send's, and then manager's async triggers. */
 	int closing; /* Set during cleanup, before an async_send. */
@@ -106,7 +104,7 @@ struct uv__executor_channel_s {
 	uv_mutex_t mutex; /* Acquire to touch any fields. */
 	uv_async_t *async; /* Worker async_send's parent on task begun and task completed. If timed_out, Worker should never send on this again. */
 
-	uv__work_t *curr_work; /* NULL means no work. */
+	struct uv__work *curr_work; /* NULL means no work. */
 	                            /* Need this, not just an ID, so the Manager can access the uv_timeout_cb from the wrapping uv_req_t. */
 	int timed_out; /* No backsies, this worker is doomed. */
 };
@@ -125,11 +123,10 @@ void uv__executor_channel_destroy (uv__executor_channel_t *channel);
 struct uv__hangman_s {
 	uv_thread_t tid;
 	uv__worker_t *victim;
-	void *data;
-	uv_killed_cb killed_cb;
+	void (*killed_cb)(struct uv__work *w);
 };
 
-void launch_hangman (uv__worker_t *victim, void *data, uv_killed_cb cb);
+void launch_hangman (uv__worker_t *victim, void (*killed_cb)(struct uv__work *w));
 
 /* Entry point for a hangman. */
 void hangman (void *arg);

@@ -30,8 +30,19 @@
 struct uv__work {
   void (*work)(struct uv__work *w); /* Set to NULL when work() returns. */
   void (*done)(struct uv__work *w, int status);
+	uint64_t (*timed_out)(struct uv__work *w); /* See uv_timed_out_cb. */
+	void (*killed)(struct uv__work *w); /* See uv_killed_cb. */
   struct uv_loop_s* loop;
   void* wq[2]; /* QUEUE_EMPTY(&wq) when work() is active. */
+
+	/* FOR DEBUGGING.
+	 * Managed by the default uv__queue_X APIs for callers of uv_queue_work. */
+	int state_queued;
+	int state_assigned;
+	int state_timed_out;
+	int state_done;
+	int state_killed;
+	int state_canceled;
 };
 
 #endif /* UV_THREADPOOL_H_ */

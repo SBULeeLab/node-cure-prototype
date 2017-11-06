@@ -311,9 +311,9 @@ typedef void (*uv_exit_cb)(uv_process_t*, int64_t exit_status, int term_signal);
 typedef void (*uv_walk_cb)(uv_handle_t* handle, void* arg);
 typedef void (*uv_fs_cb)(uv_fs_t* req);
 typedef void (*uv_work_cb)(uv_work_t* req);
-typedef uint64_t (*uv_timed_out_cb)(uv_work_t* req, void** killed_arg); /* Return 0 if we should kill, else return grace period in ms. */
-typedef void (*uv_killed_cb)(void* arg);
-typedef void (*uv_after_work_cb)(uv_work_t* req, int status);
+typedef void (*uv_after_work_cb)(uv_work_t* req, int status); /* Safe to delete req. */
+typedef uint64_t (*uv_timed_out_cb)(uv_work_t* req); /* Return 0 if we should kill, else return grace period in ms. */
+typedef void (*uv_killed_cb)(uv_work_t* req); /* Safe to delete req. */
 typedef void (*uv_getaddrinfo_cb)(uv_getaddrinfo_t* req,
                                   int status,
                                   struct addrinfo* res);
@@ -971,8 +971,8 @@ struct uv_work_s {
   UV_REQ_FIELDS
   uv_loop_t* loop;
   uv_work_cb work_cb;
-	uv_timed_out_cb timed_out_cb;
   uv_after_work_cb after_work_cb;
+	uv_timed_out_cb timed_out_cb;
 	uv_killed_cb killed_cb;
   UV_WORK_PRIVATE_FIELDS
 };
@@ -980,7 +980,10 @@ struct uv_work_s {
 UV_EXTERN int uv_queue_work(uv_loop_t* loop,
                             uv_work_t* req,
                             uv_work_cb work_cb,
-                            uv_after_work_cb after_work_cb);
+                            uv_after_work_cb after_work_cb,
+                            uv_timed_out_cb timed_out_cb,
+                            uv_killed_cb killed_cb
+														);
 
 UV_EXTERN int uv_cancel(uv_req_t* req);
 

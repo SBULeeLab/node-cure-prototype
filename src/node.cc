@@ -4892,7 +4892,7 @@ inline int Start(uv_loop_t* event_loop,
 		char *env = getenv("NODECURE_NODE_TIMEOUT_MS");
 		long timeout_ms = 1000;
 		if (env != NULL)
-			timeout_ms = atoll(env);
+			timeout_ms = atol(env);
 		timeout_watchdog = new TimeoutWatchdog(node_isolate, timeout_ms);
 		CHECK_NE(timeout_watchdog, nullptr);
   }
