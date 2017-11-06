@@ -104,8 +104,10 @@ struct uv__executor_channel_s {
 	uv_mutex_t mutex; /* Acquire to touch any fields. */
 	uv_async_t *async; /* Worker async_send's parent on task begun and task completed. If timed_out, Worker should never send on this again. */
 
-	struct uv__work *curr_work; /* NULL means no work. */
-	                            /* Need this, not just an ID, so the Manager can access the uv_timeout_cb from the wrapping uv_req_t. */
+	struct uv__work *curr_work; /* NULL means no work.
+	                             * Need this, not just an ID, so the Manager can access the uv_timeout_cb from the wrapping uv_req_t.
+															 * The worker changes this value after completing work, so comparing channel->curr_work with mgr->last_observed_work
+															 * tells manager whether or not worker has finished his work by the time the timer goes off.. */
 	int timed_out; /* No backsies, this worker is doomed. */
 };
 

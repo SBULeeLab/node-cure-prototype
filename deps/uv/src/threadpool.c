@@ -717,25 +717,23 @@ void worker (void *arg) {
 		uv_log(1, "worker: Got work %p\n", w);
     
 		uv_mutex_lock(&self->channel->mutex);
-			/* Check if we timed out. */
 			if (self->channel->timed_out) {
-				uv_log(1, "worker: Timed out??\n");
+				/* If we've been timed out (??), re-queue work and return. */
+				uv_log(1, "worker: Timed out before starting work??\n");
 				uv_mutex_unlock(&self->channel->mutex);
-				abort(); /* TODO Re-queue w and return, but this is really unlikely.	 */
+				post(&w->wq);
 			}
 
 			/* Tell manager we have a new task */
 			uv_log(1, "worker: Telling manager we have new work\n");
 			self->channel->curr_work = w;
+			self->channel->timed_out = 0;
 			uv_async_send(self->channel->async);
 		uv_mutex_unlock(&self->channel->mutex);
 
 		/* Do the work */
     w->work(w);
-		/* TODO RACE CONDITION. Our timer might have expired already. Need to synchronize better than 'self->channel->timed_out'.
-		 * However, since this depends on the timing of a syscall I'm guessing this will be a rare case. 
-		 * More likely is that on a hung syscall we only come here via uv_thread_cancel, *before* which self->channel->timed_out is set, and we return appropriately.
-		 * NB self and self->channel are not deallocated until we return. */
+
 		uv_log(1, "worker: Finished work\n");
 
 		uv_mutex_lock(&self->channel->mutex);
