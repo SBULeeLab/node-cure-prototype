@@ -780,33 +780,38 @@ void launch_hangman (uv__worker_t *victim,
 	hangman_->killed_cb = killed_cb;
 	hangman_->killed_dat = killed_dat;
 
-	rc = uv_sem_init(&hangman_->done_with_w, 0);
+	rc = uv_sem_init(&hangman_->h_done_with_w, 0);
+	if (rc) abort();
+
+	rc = uv_sem_init(&hangman_->m_done_with_h, 0);
 	if (rc) abort();
 
 	rc = uv_thread_create(&hangman_->tid, hangman, hangman_);
 	if (rc) abort();
 
   uv_log(1, "launch_hangman: waiting for hangman to be done touching w\n");
-	uv_sem_wait(&hangman_->done_with_w);
+	uv_sem_wait(&hangman_->h_done_with_w);
+  uv_log(1, "launch_hangman: telling hangman we no longer need him\n");
+	uv_sem_post(&hangman_->m_done_with_h);
 
 	return;
 }
 
 void hangman (void *h) {
 	int rc;
-	uv__hangman_t *hangman_ = NULL;
+	uv__hangman_t *self = NULL;
 
 	uv_log(1, "hangman: Entry\n");
-	hangman_ = (uv__hangman_t *) h;
-	if (hangman_ == NULL) abort();
+	self = (uv__hangman_t *) h;
+	if (self == NULL) abort();
 
 	/* Caller doesn't need to join() on us. */
-	rc = uv_thread_detach(&hangman_->tid);
+	rc = uv_thread_detach(&self->tid);
 	if (rc) abort();
 
-	if (hangman_->victim != NULL) {
+	if (self->victim != NULL) {
     /* If the victim was doing work, add it to the done queue so its done_cb can be called. */
-		struct uv__work *w = hangman_->victim->channel->curr_work;
+		struct uv__work *w = self->victim->channel->curr_work;
 
 		if (w != NULL) {
 			/* Prepare for next task. */
@@ -816,35 +821,45 @@ void hangman (void *h) {
 		}
 
     /* Signal launch_hangman that it can return, making w invalid. */
-		uv_sem_post(&hangman_->done_with_w);
+		uv_sem_post(&self->h_done_with_w);
 		/* At this point w->loop's done_cb has fired (uv__work_done), so we can no longer safely access the uv_req_t/struct uv__work associated with the victim.
 		 * This is why we use a void *dat set by the timed_out_cb. */
-		hangman_->victim->channel->curr_work = NULL; /* Avoid temptation. */
+		self->victim->channel->curr_work = NULL; /* Avoid temptation. */
 
 		/* Cancel the victim.
      * It might already have finished its task, seen channel->timed_out, and returned, so ignore the uv_thread_cancel rc. */
-		uv_log(1, "hangman: Cancel'ing victim %lld\n", hangman_->victim->tid);
-		uv_thread_cancel(&hangman_->victim->tid);
+		uv_log(1, "hangman: Cancel'ing victim %lld\n", self->victim->tid);
+		uv_thread_cancel(&self->victim->tid);
 
 		/* Join the victim. */
-		uv_log(1, "hangman: Joining victim worker %lld\n", hangman_->victim->tid);
-		rc = uv_thread_join(&hangman_->victim->tid);
+		uv_log(1, "hangman: Joining victim worker %lld\n", self->victim->tid);
+		rc = uv_thread_join(&self->victim->tid);
 		if (rc) abort();
 
 		/* Call the killed_cb if we have one. */
-		if (hangman_->killed_cb != NULL) {
-			uv_log(1, "hangman: Calling killed_cb with %p\n", hangman_->killed_dat);
-			hangman_->killed_cb(hangman_->killed_dat); /* NOT INVOKED FROM MAIN THREAD. */
+		if (self->killed_cb != NULL) {
+			uv_log(1, "hangman: Calling killed_cb with %p\n", self->killed_dat);
+			self->killed_cb(self->killed_dat); /* NOT INVOKED FROM MAIN THREAD. */
 		}
 		
 		/* Clean up */
 		uv_log(1, "hangman: Releasing victim's channel and memory\n");
-		uv__executor_channel_destroy(hangman_->victim->channel);
-		uv__free(hangman_->victim);
+		uv_mutex_lock(&self->victim->channel->mutex); /* Synchronize with manager, who was holding mutex when he launched us. */
+		uv_mutex_unlock(&self->victim->channel->mutex);
+		uv__executor_channel_destroy(self->victim->channel);
+		uv__free(self->victim);
 	}
 
+  /* Manager may not have had a turn to uv_sem_wait on h_done_with_w yet, back in launch_hangman. */
+  uv_log(1, "hangman: making sure manager is done with me\n");
+	uv_sem_wait(&self->m_done_with_h);
+
 	/* Clean up self */
-	uv__free(hangman_);
+	uv_sem_destroy(&self->h_done_with_w);
+	uv_sem_destroy(&self->m_done_with_h);
+	self->killed_dat = NULL;
+
+	uv__free(self);
 
 	uv_log(1, "hangman: Farewell\n");
 	return;
@@ -877,5 +892,3 @@ void uv__executor_channel_destroy (uv__executor_channel_t *channel) {
 	uv_mutex_destroy(&channel->mutex);
 	uv__free(channel);
 }
-
-// TODO Need to uv_mutex_destroy and uv_sem_destroy everything.

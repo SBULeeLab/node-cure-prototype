@@ -125,7 +125,8 @@ void uv__executor_channel_destroy (uv__executor_channel_t *channel);
 struct uv__hangman_s {
 	uv_thread_t tid;
 	uv__worker_t *victim;
-	uv_sem_t done_with_w; /* Hangman signals launcher that it's safe to return. */
+	uv_sem_t h_done_with_w; /* Hangman signals launcher that it's safe to return. */
+	uv_sem_t m_done_with_h; /* Manager signals hangman that it's safe to release its memory. */
 	void (*killed_cb)(void *dat);
 	void *killed_dat;
 };
