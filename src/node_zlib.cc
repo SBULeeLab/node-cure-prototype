@@ -417,7 +417,8 @@ class ZCtx : public AsyncWrap {
 			uv_sem_t *sem = (uv_sem_t *) work_req->data;
 			dprintf(2, "ZCtx::After: ETIMEDOUT, waiting for Process() to die (sem %p)\n", sem);
 			uv_sem_wait(sem);
-			// Now on timeoud, the Process thread has been killed, so our memory is safe.
+			// Now on timeout, the Process thread has been killed, so our memory is safe.
+
 			uv_sem_destroy(sem);
 			delete sem;
 		}
