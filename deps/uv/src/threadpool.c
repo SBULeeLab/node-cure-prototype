@@ -70,20 +70,17 @@ void uv_log (int verbosity, const char *format, ... ){
 		if (rc) abort();
 	}
 
-	uv_mutex_lock(&log_mutex);
-
-	/* va */
 	va_start(args, format);
 	_mylog_embed_prefix(verbosity, buffer, sizeof(buffer));
 	vsnprintf(buffer + strlen(buffer), sizeof(buffer) - strlen(buffer), format, args);
 
-	/* print */
-	fprintf(log_fp, "[%lu] %s", uv_thread_self(), buffer);
-	fflush(log_fp);
+	uv_mutex_lock(&log_mutex);
+		fprintf(log_fp, "[%lu] %s", uv_thread_self(), buffer);
+	uv_mutex_unlock(&log_mutex);
 
 	va_end (args);
 
-	uv_mutex_unlock(&log_mutex);
+	fflush(log_fp);
 }
 #endif
 
@@ -716,6 +713,7 @@ void worker (void *arg) {
     w = QUEUE_DATA(q, struct uv__work, wq);
 		uv_log(1, "worker: Got work %p\n", w);
     
+		/* TODO Mask off cancel signal here so that we don't die holding a mutex. Need a "mask-and-mutex" routine. */
 		uv_mutex_lock(&self->channel->mutex);
 			if (self->channel->timed_out) {
 				/* If we've been timed out (??), re-queue work and return. */
@@ -734,9 +732,10 @@ void worker (void *arg) {
 		/* Do the work */
     w->work(w);
 
-		uv_log(1, "worker: Finished work\n");
+		/* TODO Mask off cancel signal here so that we don't die holding a mutex. */
 
 		uv_mutex_lock(&self->channel->mutex);
+			uv_log(1, "worker: Finished work\n");
 			/* Check if we timed out. */
 			if (self->channel->timed_out) {
 				/* There's a hangman out for our blood.
