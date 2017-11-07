@@ -140,6 +140,10 @@ typedef int uv_os_sock_t;
 typedef int uv_os_fd_t;
 
 #define UV_ONCE_INIT PTHREAD_ONCE_INIT
+#define UV_CANCEL_ENABLE PTHREAD_CANCEL_ENABLE
+#define UV_CANCEL_DISABLE PTHREAD_CANCEL_DISABLE
+#define UV_CANCEL_DEFERRED PTHREAD_CANCEL_DEFERRED
+#define UV_CANCEL_ASYNCHRONOUS PTHREAD_CANCEL_ASYNCHRONOUS
 
 typedef pthread_once_t uv_once_t;
 typedef pthread_t uv_thread_t;

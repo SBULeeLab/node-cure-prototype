@@ -224,6 +224,14 @@ int uv_thread_equal(const uv_thread_t* t1, const uv_thread_t* t2) {
   return pthread_equal(*t1, *t2);
 }
 
+int uv_thread_setcancelstate(int state, int *oldstate) {
+	return pthread_setcancelstate(state, oldstate);
+}
+
+int uv_thread_setcanceltype(int type, int *oldtype) {
+	return pthread_setcanceltype(type, oldtype);
+}
+
 int uv_mutex_init(uv_mutex_t* mutex) {
 #if defined(NDEBUG) || !defined(PTHREAD_MUTEX_ERRORCHECK)
   return -pthread_mutex_init(mutex, NULL);

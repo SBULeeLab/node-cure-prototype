@@ -1484,6 +1484,8 @@ UV_EXTERN int uv_thread_join(uv_thread_t *tid);
 UV_EXTERN int uv_thread_cancel(uv_thread_t *tid);
 UV_EXTERN int uv_thread_detach(uv_thread_t *tid);
 UV_EXTERN int uv_thread_equal(const uv_thread_t* t1, const uv_thread_t* t2);
+UV_EXTERN int uv_thread_setcancelstate(int state, int *oldstate);
+UV_EXTERN int uv_thread_setcanceltype(int type, int *oldtype);
 
 /* The presence of these unions force similar struct layout. */
 #define XX(_, name) uv_ ## name ## _t name;

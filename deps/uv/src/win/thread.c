@@ -198,6 +198,13 @@ int uv_thread_equal(const uv_thread_t* t1, const uv_thread_t* t2) {
   return *t1 == *t2;
 }
 
+int uv_thread_setcancelstate(int state, int *oldstate) {
+	return UV_ENOTSUP;
+}
+
+int uv_thread_setcanceltype(int type, int *oldtype) {
+	return UV_ENOTSUP;
+}
 
 int uv_mutex_init(uv_mutex_t* mutex) {
   InitializeCriticalSection(mutex);

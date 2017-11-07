@@ -677,15 +677,38 @@ int launch_worker (uv__worker_t *worker_, uv__executor_channel_t *channel) {
 	return rc;
 }
 
+static void mark_not_cancelable (void) {
+	int old;
+	int rc = uv_thread_setcancelstate(UV_CANCEL_DISABLE, &old);
+	if (rc) abort();
+}
+
+static void mark_cancelable (void) {
+	int old;
+	int rc = uv_thread_setcancelstate(UV_CANCEL_ENABLE, &old);
+	if (rc) abort();
+}
+
 /* To avoid deadlock with uv_cancel() it's crucial that the worker
  * never holds the global mutex and the loop-local mutex at the same time.
  */
 void worker (void *arg) {
   struct uv__work* w;
   QUEUE* q;
+	int rc;
+	int old;
 
 	uv__worker_t *self = (uv__worker_t *) arg;
 	assert(self != NULL);
+
+  /* A worker should be cancel'able at any time, not just when it reaches a cancellation point (i.e. a syscall).
+	 * This makes sure that a worker in an infinite loop can be cancelled. */
+	rc = uv_thread_setcanceltype(UV_CANCEL_ASYNCHRONOUS, &old);
+	if (rc) abort();
+
+	/* Workers should only be cancel'able when they are stuck in a work CB.
+	 * Otherwise they might be cancelled while doing bookkeeping holding one of our mutexes. */
+	mark_not_cancelable();
 
   for (;;) {
     uv_mutex_lock(&mutex);
@@ -716,7 +739,6 @@ void worker (void *arg) {
     w = QUEUE_DATA(q, struct uv__work, wq);
 		uv_log(1, "worker: Got work %p\n", w);
     
-		/* TODO Mask off cancel signal here so that we don't die holding a mutex. Need a "mask-and-mutex" routine. */
 		uv_mutex_lock(&self->channel->mutex);
 			if (self->channel->timed_out) {
 				/* If we've been timed out (??), re-queue work and return. */
@@ -732,17 +754,22 @@ void worker (void *arg) {
 			uv_async_send(self->channel->async);
 		uv_mutex_unlock(&self->channel->mutex);
 
-		/* Do the work */
-    w->work(w);
 
-		/* TODO Mask off cancel signal here so that we don't die holding a mutex. */
+		/* Do the work.
+		 * Thread is cancel'able here. */
+		uv_log(1, "worker: Starting work\n");
+
+		mark_cancelable();
+    w->work(w);
+		mark_not_cancelable();
+
+		uv_log(1, "worker: Finished work\n");
 
 		uv_mutex_lock(&self->channel->mutex);
-			uv_log(1, "worker: Finished work\n");
 			/* Check if we timed out. */
 			if (self->channel->timed_out) {
 				/* There's a hangman out for our blood.
-				 * He will clean up our corpse. */
+				 * He will clean up our corpse and queue w for us. */
 				uv_log(1, "worker: Timed out, returning\n");
 				uv_mutex_unlock(&self->channel->mutex);
 				return;
@@ -753,6 +780,10 @@ void worker (void *arg) {
 			self->channel->curr_work = NULL;
 			uv_async_send(self->channel->async);
 		uv_mutex_unlock(&self->channel->mutex);
+
+    /* I don't think we should receive a signal here, but just in case... */
+		mark_cancelable();
+		mark_not_cancelable();
 
 		/* Prepare for next task. */
 		uv_log(1, "worker: Signaling loop that task %p is done.\n", w);
