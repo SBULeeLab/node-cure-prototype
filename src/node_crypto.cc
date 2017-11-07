@@ -5265,7 +5265,7 @@ class PBKDF2Request : public AsyncWrap {
                 int keylen)
       : AsyncWrap(env, object, AsyncWrap::PROVIDER_PBKDF2REQUEST),
         digest_(digest),
-        success_(false),
+        status_(-1),
         passlen_(passlen),
         pass_(pass),
         saltlen_(saltlen),
@@ -5301,15 +5301,18 @@ class PBKDF2Request : public AsyncWrap {
 
   static void Work(uv_work_t* work_req);
   void Work();
+  static uint64_t TimedOut(uv_work_t* work_req, void **dat);
 
   static void After(uv_work_t* work_req, int status);
   void After(Local<Value> (*argv)[2]);
   void After();
 
+	static void Killed(void *dat);
+
  private:
   uv_work_t work_req_;
   const EVP_MD* digest_;
-  bool success_;
+  int status_; // -1 undefined, 0 success, ETIMEDOUT
   int passlen_;
   char* pass_;
   int saltlen_;
@@ -5321,12 +5324,15 @@ class PBKDF2Request : public AsyncWrap {
 
 
 void PBKDF2Request::Work() {
-  success_ =
+  bool success =
       PKCS5_PBKDF2_HMAC(
           pass_, passlen_, reinterpret_cast<unsigned char*>(salt_), saltlen_,
           iter_, digest_, keylen_, reinterpret_cast<unsigned char*>(key_));
   OPENSSL_cleanse(pass_, passlen_);
   OPENSSL_cleanse(salt_, saltlen_);
+
+	if (success)
+		status_ = 0;
 }
 
 
@@ -5335,17 +5341,43 @@ void PBKDF2Request::Work(uv_work_t* work_req) {
   req->Work();
 }
 
+// Timeout: we're stuck in openssl somewhere.
+// Recovery: - ask libuv to kill the runaway thread (should be quick, it's just burning the CPU)
+//           - don't return in After until the runaway thread is dead
+uint64_t PBKDF2Request::TimedOut(uv_work_t* work_req, void **dat) {
+	uv_sem_t *sem = new uv_sem_t;
+	if (sem == NULL)
+		abort();
+
+	dprintf(2, "PBKDF2Request::TimedOut: Timed out, created semaphore for After to wait on: %p\n", sem);
+
+	uv_sem_init(sem, 0);
+
+	*dat = sem; // post in Killed
+	work_req->data = sem; // wait in After
+
+  PBKDF2Request* req = ContainerOf(&PBKDF2Request::work_req_, work_req);
+	req->status_ = ETIMEDOUT;
+
+	return 0;
+}
 
 void PBKDF2Request::After(Local<Value> (*argv)[2]) {
-  if (success_) {
+  if (status_ == ETIMEDOUT) {
+		char errmsg[256] = "Timed out";
+		(*argv)[0] = Exception::TimeoutError(OneByteString(env()->isolate(), errmsg));
+    (*argv)[1] = Undefined(env()->isolate());
+	}
+	else if (status_) {
+    (*argv)[0] = Exception::Error(env()->pbkdf2_error_string());
+    (*argv)[1] = Undefined(env()->isolate());
+	}
+	else {
     (*argv)[0] = Undefined(env()->isolate());
     (*argv)[1] = Buffer::New(env(), key_, keylen_).ToLocalChecked();
     key_ = nullptr;
     keylen_ = 0;
-  } else {
-    (*argv)[0] = Exception::Error(env()->pbkdf2_error_string());
-    (*argv)[1] = Undefined(env()->isolate());
-  }
+	}
 }
 
 
@@ -5359,10 +5391,32 @@ void PBKDF2Request::After() {
 
 
 void PBKDF2Request::After(uv_work_t* work_req, int status) {
-  CHECK_EQ(status, 0);
-  PBKDF2Request* req = ContainerOf(&PBKDF2Request::work_req_, work_req);
-  req->After();
-  delete req;
+	PBKDF2Request* req = ContainerOf(&PBKDF2Request::work_req_, work_req);
+
+	// We don't know what's happening in openssl, but it's not a syscall so it won't block forever.
+	// We wait for the thread running Work() to be killed and then we can safely abort.
+	if (status == -ETIMEDOUT) {
+		uv_sem_t *sem = (uv_sem_t *) work_req->data;
+		dprintf(2, "PBKDF2Request::After: ETIMEDOUT, waiting for Work() to die (sem %p)\n", sem);
+		uv_sem_wait(sem);
+		// Now on timeout, the Work thread has been killed, so our memory is safe.
+
+		uv_sem_destroy(sem);
+		delete sem;
+
+		req->status_ = ETIMEDOUT;
+	}
+	else
+		CHECK_EQ(status, 0);
+
+	req->After();
+	delete req;
+}
+
+void PBKDF2Request::Killed(void *dat) {
+	dprintf(2, "PBKDF2Request::Killed: Killed, post'ing\n"); 
+	uv_sem_post((uv_sem_t *) dat);
+	return;
 }
 
 
@@ -5470,9 +5524,9 @@ void PBKDF2(const FunctionCallbackInfo<Value>& args) {
     uv_queue_work(env->event_loop(),
                   req->work_req(),
                   PBKDF2Request::Work,
-									NULL,
+									PBKDF2Request::TimedOut,
                   PBKDF2Request::After,
-									NULL);
+									PBKDF2Request::Killed);
   } else {
     env->PrintSyncTrace();
     req->Work();
@@ -5586,10 +5640,34 @@ void RandomBytesWork(uv_work_t* work_req) {
   }
 }
 
+// Timeout: we're stuck in openssl somewhere.
+// Recovery: - ask libuv to kill the runaway thread (should be quick, it's just burning the CPU)
+//           - don't return in After until the runaway thread is dead
+uint64_t RandomBytesTimedOut(uv_work_t* work_req, void **dat) {
+	uv_sem_t *sem = new uv_sem_t;
+	if (sem == NULL)
+		abort();
+
+	dprintf(2, "RandomBytesTimedOut: Timed out, created semaphore for After to wait on: %p\n", sem);
+
+	uv_sem_init(sem, 0);
+
+	*dat = sem; // post in Killed
+	work_req->data = sem; // wait in After
+
+	return 0;
+}
+
 
 // don't call this function without a valid HandleScope
 void RandomBytesCheck(RandomBytesRequest* req, Local<Value> (*argv)[2]) {
-  if (req->error()) {
+	if (req->error() == ETIMEDOUT){
+		char errmsg[256] = "Timed out";
+		(*argv)[0] = Exception::TimeoutError(OneByteString(req->env()->isolate(), errmsg));
+    (*argv)[1] = Null(req->env()->isolate());
+		req->release();
+	}
+  else if (req->error()) {
     char errmsg[256] = "Operation not supported";
 
     if (req->error() != static_cast<unsigned long>(-1))  // NOLINT(runtime/int)
@@ -5620,9 +5698,25 @@ void RandomBytesCheck(RandomBytesRequest* req, Local<Value> (*argv)[2]) {
 
 
 void RandomBytesAfter(uv_work_t* work_req, int status) {
-  CHECK_EQ(status, 0);
   RandomBytesRequest* req =
       ContainerOf(&RandomBytesRequest::work_req_, work_req);
+
+	// We don't know what's happening in openssl, but it's not a syscall so it won't block forever.
+	// We wait for the thread running Work() to be killed and then we can safely abort.
+	if (status == -ETIMEDOUT) {
+		uv_sem_t *sem = (uv_sem_t *) work_req->data;
+		dprintf(2, "RandomBytesAfter: ETIMEDOUT, waiting for RandomBytesWork() to die (sem %p)\n", sem);
+		uv_sem_wait(sem);
+		// Now on timeout, the Work thread has been killed, so our memory is safe.
+
+		uv_sem_destroy(sem);
+		delete sem;
+
+		req->set_error(ETIMEDOUT);
+	}
+	else
+		CHECK_EQ(status, 0);
+
   Environment* env = req->env();
   HandleScope handle_scope(env->isolate());
   Context::Scope context_scope(env->context());
@@ -5632,6 +5726,11 @@ void RandomBytesAfter(uv_work_t* work_req, int status) {
   delete req;
 }
 
+void RandomBytesKilled(void *dat) {
+	dprintf(2, "RandomBytesKilled: Killed, post'ing\n"); 
+	uv_sem_post((uv_sem_t *) dat);
+	return;
+}
 
 void RandomBytesProcessSync(Environment* env,
                             RandomBytesRequest* req,
@@ -5680,9 +5779,9 @@ void RandomBytes(const FunctionCallbackInfo<Value>& args) {
     uv_queue_work(env->event_loop(),
                   req->work_req(),
                   RandomBytesWork,
-									NULL,
+									RandomBytesTimedOut,
                   RandomBytesAfter,
-									NULL);
+									RandomBytesKilled);
     args.GetReturnValue().Set(obj);
   } else {
     Local<Value> argv[2];
@@ -5728,9 +5827,9 @@ void RandomBytesBuffer(const FunctionCallbackInfo<Value>& args) {
     uv_queue_work(env->event_loop(),
                   req->work_req(),
                   RandomBytesWork,
-									NULL,
+									RandomBytesTimedOut,
                   RandomBytesAfter,
-									NULL);
+									RandomBytesKilled);
     args.GetReturnValue().Set(obj);
   } else {
     Local<Value> argv[2];
