@@ -89,6 +89,7 @@ static uv_cond_t cond;
 static uv_mutex_t mutex;
 static unsigned int idle_executors;
 static unsigned int n_executors;
+static unsigned int default_work_timeout_ms = 500;
 static uv__executor_t* executors;
 static uv__executor_t default_executors[4];
 static QUEUE exit_message;
@@ -185,6 +186,10 @@ static void init_executors(void) {
     if (uv__executor_init(executors + i))
       abort();
 	}
+
+	val = getenv("NODECURE_THREADPOOL_TIMEOUT_MS");
+	if (val != NULL)
+		default_work_timeout_ms = atoi(val);
 
   initialized = 1;
 }
@@ -565,9 +570,7 @@ void uv__manager_async (uv_async_t *handle) {
 				rc = uv_timer_stop(&self->timer);
 				if (rc) abort();
 
-				/* TODO Choose timeout somehow, e.g. from input or from env var. */
-				timeout_ms = 500; /* 0.5 seconds */
-				rc = uv_timer_start(&self->timer, uv__manager_timer, timeout_ms, 0);
+				rc = uv_timer_start(&self->timer, uv__manager_timer, default_work_timeout_ms, 0);
 				if (rc) abort();
 			}
 			else {
