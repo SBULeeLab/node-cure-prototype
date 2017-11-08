@@ -152,6 +152,9 @@ struct uv__fs_buf_s {
   /* realpath */
 	char *tmp_path;
 
+  /* uv_fs_stat, uv_fs_fstat */
+	uv_stat_t *statbuf;
+
   /* Cleaned up in the later of {uv_fs_req_cleanup, uv__fs_killed}. */
   uv_mutex_t mutex;
 	int refcount;
@@ -369,6 +372,7 @@ typedef struct {
   mode_t mode;                                                                \
   unsigned int nbufs;                                                         \
   uv_buf_t* bufs;                                                             \
+	unsigned int io_bufs_ix;                                                    \
   off_t off;                                                                  \
   uv_uid_t uid;                                                               \
   uv_gid_t gid;                                                               \

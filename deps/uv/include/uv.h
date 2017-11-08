@@ -59,6 +59,7 @@ extern "C" {
 #if defined(_WIN32)
 # include "uv-win.h"
 #else
+typedef struct uv_stat_s uv_stat_t; /* HACK */
 # include "uv-unix.h"
 #endif
 
@@ -331,7 +332,7 @@ typedef struct {
 } uv_timespec_t;
 
 
-typedef struct {
+struct uv_stat_s {
   uint64_t st_dev;
   uint64_t st_mode;
   uint64_t st_nlink;
@@ -348,7 +349,7 @@ typedef struct {
   uv_timespec_t st_mtim;
   uv_timespec_t st_ctim;
   uv_timespec_t st_birthtim;
-} uv_stat_t;
+};
 
 
 typedef void (*uv_fs_event_cb)(uv_fs_event_t* handle,
