@@ -126,7 +126,7 @@ typedef struct fd2ino_s {
 
 static uv_once_t slow_resources_init_once = UV_ONCE_INIT;
 
-static slow_fd_t *slow_rph_table = NULL; 
+static slow_rph_t *slow_rph_table = NULL; 
 static uv_mutex_t slow_rph_lock;
 
 static slow_fd_t *slow_fd_table = NULL; 
@@ -171,7 +171,7 @@ typedef enum {
 
 /* unsigned* */
 #define FIND_RPH(rphP, out)                                                   \
-    HASH_FIND(hh, slow_rph_table, rph, sizeof(unsigned), out)
+    HASH_FIND(hh, slow_rph_table, rphP, sizeof(unsigned), out)
 
 /* slow_rph_t* */
 #define ADD_RPH(add)                                                          \
@@ -182,8 +182,8 @@ typedef enum {
     HASH_REPLACE(hh, slow_rph_table, rph, sizeof(unsigned), add, replaced)
 
 /* FD */
-#define FIND_FD(fd, out)                                                      \
-    HASH_FIND(hh, slow_fd_table, fd, sizeof(uv_file), out)
+#define FIND_FD(fdP, out)                                                      \
+    HASH_FIND(hh, slow_fd_table, fdP, sizeof(uv_file), out)
 
 #define ADD_FD(add)                                                           \
     HASH_ADD(hh, slow_fd_table, fd, sizeof(uv_file), add)
@@ -192,8 +192,8 @@ typedef enum {
     HASH_REPLACE(hh, slow_fd_table, fd, sizeof(uv_file), add, replaced)
 
 /* Inode */
-#define FIND_INO(ino, out)                                                    \
-    HASH_FIND(hh, slow_ino_table, ino, sizeof(ino_t), out)
+#define FIND_INO(inoP, out)                                                    \
+    HASH_FIND(hh, slow_ino_table, inoP, sizeof(ino_t), out)
 
 #define ADD_INO(add)                                                          \
     HASH_ADD(hh, slow_ino_table, ino, sizeof(ino_t), add)
@@ -202,8 +202,8 @@ typedef enum {
     HASH_REPLACE(hh, slow_ino_table, ino, sizeof(ino_t), add, replaced)
 
 /* Macros to access the fd2inode map. */
-#define FIND_FD2INO(fd, out)                                                    \
-    HASH_FIND(hh, fd2ino_table, fd , sizeof(uv_file), out)
+#define FIND_FD2INO(fdP, out)                                                    \
+    HASH_FIND(hh, fd2ino_table, fdP, sizeof(uv_file), out)
 
 #define ADD_FD2INO(add)                                                          \
     HASH_ADD(hh, fd2ino_table, fd, sizeof(uv_file), add)
@@ -237,7 +237,7 @@ static slow_rph_t * slow_rph_add (unsigned rph) {
 
 	uv_mutex_lock(&slow_rph_lock);
 	if (rph_is_slow(rph))
-		return;
+		return NULL;
 
   slow_rph = (slow_rph_t *) uv__malloc(sizeof(*slow_rph));
 	if (slow_rph == NULL)
@@ -256,7 +256,7 @@ static slow_rph_t * slow_rph_replace (unsigned rph) {
 
 	uv_mutex_lock(&slow_rph_lock);
 	if (rph_is_slow(rph))
-		return;
+		return NULL;
 
   slow_rph_new = (slow_rph_t *) uv__malloc(sizeof(*slow_rph_new));
 	if (slow_rph_new == NULL)
@@ -293,7 +293,7 @@ static slow_fd_t * slow_fd_add (uv_file fd) {
 
 	uv_mutex_lock(&slow_fd_lock);
 	if (fd_is_slow(fd))
-		return;
+		return NULL;
 
   slow_fd = (slow_fd_t *) uv__malloc(sizeof(*slow_fd));
 	if (slow_fd == NULL)
@@ -306,13 +306,13 @@ static slow_fd_t * slow_fd_add (uv_file fd) {
 	return slow_fd;
 }
 
-/* Caller must uv__free the returned value. */
+/* Caller must uv__free the returned value if not NULL. */
 static slow_fd_t * slow_fd_replace (uv_file fd) {
   slow_fd_t *slow_fd_old, *slow_fd_new;
 
 	uv_mutex_lock(&slow_fd_lock);
 	if (fd_is_slow(fd))
-		return;
+		return NULL;
 
   slow_fd_new = (slow_fd_t *) uv__malloc(sizeof(*slow_fd_new));
 	if (slow_fd_new == NULL)
@@ -361,7 +361,7 @@ static slow_ino_t * slow_ino_add (unsigned ino) {
 
 	uv_mutex_lock(&slow_ino_lock);
 	if (ino_is_slow(ino))
-		return;
+		return NULL;
 
   slow_ino = (slow_ino_t *) uv__malloc(sizeof(*slow_ino));
 	if (slow_ino == NULL)
@@ -380,7 +380,7 @@ static slow_ino_t * slow_ino_replace (unsigned ino) {
 
 	uv_mutex_lock(&slow_ino_lock);
 	if (ino_is_slow(ino))
-		return;
+		return NULL;
 
   slow_ino_new = (slow_ino_t *) uv__malloc(sizeof(*slow_ino_new));
 	if (slow_ino_new == NULL)
@@ -415,7 +415,7 @@ static int fd2ino_known (uv_file fd) {
 static fd2ino_t * fd2ino_add (uv_file fd, ino_t ino) {
   fd2ino_t *fd2ino;
 
-  dprintf(2, "fd2ino_add: %d -> %llu\n", fd, ino);
+  dprintf(2, "fd2ino_add: %d -> %lu\n", fd, ino);
 
 	uv_mutex_lock(&fd2ino_lock);
 	if (fd2ino_known(fd))
@@ -439,7 +439,7 @@ static fd2ino_t * fd2ino_replace (uv_file fd, ino_t ino) {
 
 	uv_mutex_lock(&fd2ino_lock);
 	if (fd_is_slow(fd))
-		return;
+		return NULL;
 
   fd2ino_new = (fd2ino_t *) uv__malloc(sizeof(*fd2ino_new));
 	if (fd2ino_new == NULL)
@@ -497,6 +497,168 @@ static int are_resources_slow (uv_fs_t *req) {
 }
 
 /* Various magics for ensuring "good behavior", that runaway threads always work on buffers, etc. */
+
+/* Initialize with refcount 0. */
+static uv__fs_buf_t * uv__fs_buf_create (void) {
+	uv__fs_buf_t *buf;
+	
+	buf = (uv__fs_buf_t *) uv__malloc(sizeof(*buf));
+	if (buf == NULL)
+		return NULL;
+	
+	buf->io_bufs = NULL;
+	buf->io_orig_bases = NULL;
+	buf->io_nbufs = 0;
+
+	buf->path = NULL;
+	buf->new_path = NULL;
+	buf->tmp_path = NULL;
+
+	if (uv_mutex_init(&buf->mutex) != 0)
+		abort();
+
+	buf->refcount = 0; 
+
+	dprintf(2, "uv__fs_buf_create: Return'ing buf %p\n", buf);
+	return buf;
+}
+
+/* Add a reference-r. Caller should not hold lock. */ 
+static void uv__fs_buf_ref (uv__fs_buf_t *buf) {
+	if (buf != NULL) {
+		dprintf(2, "uv__fs_buf_ref: Ref'ing buf %p\n", buf);
+		uv_mutex_lock(&buf->mutex);
+		buf->refcount++;
+		uv_mutex_unlock(&buf->mutex);
+	}
+
+	return;
+}
+
+static void uv__fs_buf_destroy (uv__fs_buf_t *buf) {
+	unsigned int i;
+
+	if (buf == NULL)
+		return;
+
+	dprintf(2, "uv__fs_buf_unref: Destroy'ing buf %p\n", buf);
+
+	/* Clean up any timeout-safe memory. */
+	/* io_bufs: free each uv_buf_t's base, then io_bufs itself. */
+	if (buf->io_bufs != NULL) {
+		for (i = 0; i < buf->io_nbufs; i++) {
+			uv__free(buf->io_bufs[i].base);
+			buf->io_bufs[i].base = NULL;
+		}
+		uv__free(buf->io_bufs);
+		buf->io_bufs = NULL;
+	}
+
+	if (buf->io_orig_bases != NULL) {
+		uv__free(buf->io_orig_bases);
+		buf->io_orig_bases = NULL;
+	}
+
+	/* Memory is shared with buf->new_path. */
+  /* TODO Possible re-optimization point.
+	 *      Can share user's path memory on sync requests, and don't deallocate here. */
+	if (buf->path != NULL) {
+		uv__free(buf->path);
+		buf->path = NULL;
+	}
+
+	if (buf->tmp_path != NULL) {
+		uv__free(buf->tmp_path);
+		buf->tmp_path = NULL;
+	}
+
+	uv_mutex_destroy(&buf->mutex);
+	uv__free(buf);
+	buf = NULL;
+}
+
+/* The last dereference-r destroys it. Caller should not hold lock. */
+static void uv__fs_buf_unref (uv__fs_buf_t *buf) {
+	int destroy_timeout_buf;
+
+	if (buf == NULL)
+		return;
+	
+	dprintf(2, "uv__fs_buf_unref: Unref'ing buf %p\n", buf);
+
+	/* We hold one of the references to timeout_buf, see if we hold the last one. */ 
+	destroy_timeout_buf = 0;
+	uv_mutex_lock(&buf->mutex);
+	buf->refcount--;
+	if (buf->refcount == 0)
+		destroy_timeout_buf = 1;
+	uv_mutex_unlock(&buf->mutex);
+
+	if (destroy_timeout_buf)
+		uv__fs_buf_destroy(buf);
+
+	return;
+}
+
+/* Return 0 on success. */
+int uv__fs_buf_copy_io_bufs(uv__fs_buf_t *fs_buf, const uv_buf_t bufs[], unsigned int nbufs) {
+	unsigned int i = 0;
+	unsigned int nallocated = 0;
+
+	if (fs_buf == NULL)
+		abort();
+	
+	if (nbufs == 0)
+		return 0;
+	
+	if (fs_buf->io_bufs != NULL)
+		abort();
+
+	fs_buf->io_bufs = (uv_buf_t *) uv__malloc(nbufs*sizeof(*fs_buf->io_bufs));
+	if (fs_buf->io_bufs == NULL)
+		return -ENOMEM;
+	
+	fs_buf->io_orig_bases = (char **) uv__malloc(nbufs*sizeof(char *));
+	if (fs_buf->io_orig_bases == NULL)
+		goto ERROR_ENOMEM;
+	
+	for (i = 0; i < nbufs; i++) {
+		fs_buf->io_bufs[i].base = (char *) uv__malloc(bufs[i].len);
+		if (fs_buf->io_bufs[i].base == NULL)
+			break;
+		fs_buf->io_bufs[i].len = bufs[i].len;
+		fs_buf->io_orig_bases[i] = bufs[i].base; /* Save orig pointer for copy back on success. */
+		/* Required for write, allows caller to use read canaries on read. */
+		memcpy(fs_buf->io_bufs[i].base, bufs[i].base, bufs[i].len);
+
+		nallocated++;
+	}
+
+	if (nallocated < nbufs)
+		goto ERROR_ENOMEM;
+	
+	return 0;
+	
+ERROR_ENOMEM:
+  /* Allocation issue on one of the io_bufs. Release all memory and return in error. */
+	if (fs_buf->io_orig_bases) {
+		uv__free(fs_buf->io_orig_bases);
+		fs_buf->io_orig_bases = NULL;
+	}
+
+	if (fs_buf->io_bufs) {
+		for (i = 0; i < nallocated; i++) {
+			uv__free(fs_buf->io_bufs[i].base);
+			fs_buf->io_bufs[i].base = NULL;
+		}
+
+		uv__free(fs_buf->io_bufs);
+		fs_buf->io_bufs = NULL;
+	}
+
+	return -ENOMEM;
+}
+
 /* TODO */
 
 #define INIT(subtype)                                                         \
@@ -512,45 +674,45 @@ static int are_resources_slow (uv_fs_t *req) {
     req->ptr = NULL;                                                          \
     req->loop = loop;                                                         \
     req->path = NULL;                                                         \
-    req->new_path = NULL;                                                     \
     req->cb = cb;                                                             \
+		req->timeout_buf = uv__fs_buf_create();                                   \
+		if (req->timeout_buf == NULL) {                                           \
+			return -ENOMEM;                                                         \
+		}                                                                         \
+		uv__fs_buf_ref(req->timeout_buf);                                         \
   }                                                                           \
   while (0)
 
+/* JD: I removed the synchronous case in PATH and PATH2 for ease of uv__fs_buf_deref cleanup.
+ *     This is a possible re-optimization point -- check whether request was sync or async
+ *     and wipe the paths before uv__fs_buf_deref if it was sync. */
 #define PATH                                                                  \
   do {                                                                        \
     assert(path != NULL);                                                     \
-    if (cb == NULL) {                                                         \
-      req->path = path;                                                       \
-    } else {                                                                  \
-      req->path = uv__strdup(path);                                           \
-      if (req->path == NULL) {                                                \
-        uv__req_unregister(loop, req);                                        \
-        return -ENOMEM;                                                       \
-      }                                                                       \
+    req->timeout_buf->path = uv__strdup(path);                                \
+    if (req->timeout_buf->path == NULL) {                                     \
+			uv__fs_buf_unref(req->timeout_buf);                                     \
+      uv__req_unregister(loop, req);                                          \
+      return -ENOMEM;                                                         \
     }                                                                         \
   }                                                                           \
   while (0)
 
 #define PATH2                                                                 \
   do {                                                                        \
-    if (cb == NULL) {                                                         \
-      req->path = path;                                                       \
-      req->new_path = new_path;                                               \
-    } else {                                                                  \
-      size_t path_len;                                                        \
-      size_t new_path_len;                                                    \
-      path_len = strlen(path) + 1;                                            \
-      new_path_len = strlen(new_path) + 1;                                    \
-      req->path = uv__malloc(path_len + new_path_len);                        \
-      if (req->path == NULL) {                                                \
-        uv__req_unregister(loop, req);                                        \
-        return -ENOMEM;                                                       \
-      }                                                                       \
-      req->new_path = req->path + path_len;                                   \
-      memcpy((void*) req->path, path, path_len);                              \
-      memcpy((void*) req->new_path, new_path, new_path_len);                  \
+    size_t path_len;                                                          \
+    size_t new_path_len;                                                      \
+    path_len = strlen(path) + 1;                                              \
+    new_path_len = strlen(new_path) + 1;                                      \
+    req->timeout_buf->path = uv__malloc(path_len + new_path_len);             \
+    if (req->timeout_buf->path == NULL) {                                     \
+			uv__free(req->timeout_buf);                                             \
+      uv__req_unregister(loop, req);                                          \
+      return -ENOMEM;                                                         \
     }                                                                         \
+    req->timeout_buf->new_path = req->timeout_buf->path + path_len;           \
+    memcpy((void*) req->timeout_buf->path, path, path_len);                   \
+    memcpy((void*) req->timeout_buf->new_path, new_path, new_path_len);       \
   }                                                                           \
   while (0)
 
@@ -717,7 +879,7 @@ skip:
 
 
 static ssize_t uv__fs_mkdtemp(uv_fs_t* req) {
-  return mkdtemp((char*) req->path) ? 0 : -1;
+  return mkdtemp((char*) req->timeout_buf->path) ? 0 : -1;
 }
 
 
@@ -727,12 +889,12 @@ static ssize_t uv__fs_open(uv_fs_t* req) {
   int rc;
   uv_stat_t statbuf;
 
-  /* If we out after open succeeds, we might leak: fd. */
+  /* If we out during or after an otherwise-successful open, we might leak: fd. */
 
   /* Try O_CLOEXEC before entering locks */
   if (no_cloexec_support == 0) {
 #ifdef O_CLOEXEC
-    r = open(req->path, req->flags | O_CLOEXEC, req->mode);
+    r = open(req->timeout_buf->path, req->flags | O_CLOEXEC, req->mode);
     if (r >= 0)
       return r;
     if (errno != EINVAL)
@@ -744,7 +906,7 @@ static ssize_t uv__fs_open(uv_fs_t* req) {
   if (req->cb != NULL)
     uv_rwlock_rdlock(&req->loop->cloexec_lock);
 
-  r = open(req->path, req->flags, req->mode);
+  r = open(req->timeout_buf->path, req->flags, req->mode);
 
   /* In case of failure `uv__cloexec` will leave error in `errno`,
    * so it is enough to just set `r` to `-1`.
@@ -771,7 +933,6 @@ static ssize_t uv__fs_open(uv_fs_t* req) {
   return r;
 }
 
-
 static ssize_t uv__fs_read(uv_fs_t* req) {
 #if defined(__linux__)
   static int no_preadv;
@@ -787,6 +948,14 @@ static ssize_t uv__fs_read(uv_fs_t* req) {
     return -1;
   }
 #endif /* defined(_AIX) */
+
+  /* Caller is supposed to have set req->bufs to point to some buf allocated in req->timeout_buf->io_bufs. */
+	if (req->timeout_buf->io_bufs <= req->bufs &&
+		  req->bufs < req->timeout_buf->io_bufs + req->timeout_buf->io_nbufs) {
+	}
+	else
+		abort();
+
   if (req->off < 0) {
     if (req->nbufs == 1)
       result = read(req->file, req->bufs[0].base, req->bufs[0].len);
@@ -860,11 +1029,11 @@ static ssize_t uv__fs_scandir(uv_fs_t* req) {
   int n;
 
   dents = NULL;
-  /* If we time this out, we might leak: fd, memory. */
-  n = scandir(req->path, &dents, uv__fs_scandir_filter, uv__fs_scandir_sort);
+  /* If we time this out, scandir itself might leak: fd, memory. */
+  n = scandir(req->timeout_buf->path, &dents, uv__fs_scandir_filter, uv__fs_scandir_sort);
 
   /* NOTE: We will use nbufs as an index field */
-  req->nbufs = 0;
+  req->timeout_buf->io_nbufs = 0;
 
   if (n == 0) {
     /* OS X still needs to deallocate some memory.
@@ -902,7 +1071,7 @@ static ssize_t uv__fs_readlink(uv_fs_t* req) {
   ssize_t len;
   char* buf;
 
-  len = uv__fs_pathmax_size(req->path);
+  len = uv__fs_pathmax_size(req->timeout_buf->path);
   buf = uv__malloc(len + 1);
 
   if (buf == NULL) {
@@ -911,9 +1080,9 @@ static ssize_t uv__fs_readlink(uv_fs_t* req) {
   }
 
 #if defined(__MVS__)
-  len = os390_readlink(req->path, buf, len);
+  len = os390_readlink(req->timeout_buf->path, buf, len);
 #else
-  len = readlink(req->path, buf, len);
+  len = readlink(req->timeout_buf->path, buf, len);
 #endif
 
 
@@ -929,26 +1098,23 @@ static ssize_t uv__fs_readlink(uv_fs_t* req) {
 }
 
 static ssize_t uv__fs_realpath(uv_fs_t* req) {
-	int rc;
   ssize_t len;
-  char* buf;
 
-  len = uv__fs_pathmax_size(req->path);
-  buf = uv__malloc(len + 1);
+  len = uv__fs_pathmax_size(req->timeout_buf->path);
 
-  if (buf == NULL) {
+  /* Allocate in timeout_buf so if we are interrupted during realpath we can free in uv_fs_req_cleanup. */
+  req->timeout_buf->tmp_path = uv__malloc(len + 1);
+  if (req->timeout_buf->tmp_path == NULL) {
     errno = ENOMEM;
     return -1;
   }
 
-  /* If we time this out, we might leak: fd, memory. */
-  if (realpath(req->path, buf) == NULL) {
-    uv__free(buf);
+  /* If we time this out, realpath itself might leak: fd, memory. */
+  if (realpath(req->timeout_buf->path, req->timeout_buf->tmp_path) == NULL) {
     return -1;
   }
 
-  req->ptr = buf;
-
+  req->ptr = req->timeout_buf->tmp_path;
   return 0;
 }
 
@@ -966,7 +1132,7 @@ static ssize_t uv__fs_sendfile_emul(uv_fs_t* req) {
   int out_fd;
   char buf[8192];
 
-  len = req->bufsml[0].len;
+  len = req->timeout_buf->io_bufs[0].len;
   in_fd = req->flags;
   out_fd = req->file;
   offset = req->off;
@@ -1079,7 +1245,7 @@ static ssize_t uv__fs_sendfile(uv_fs_t* req) {
     ssize_t r;
 
     off = req->off;
-    r = sendfile(out_fd, in_fd, &off, req->bufsml[0].len);
+    r = sendfile(out_fd, in_fd, &off, req->timeout_buf->io_bufs[0].len);
 
     /* sendfile() on SunOS returns EINVAL if the target fd is not a socket but
      * it still writes out data. Fortunately, we can detect it by checking if
@@ -1116,20 +1282,20 @@ static ssize_t uv__fs_sendfile(uv_fs_t* req) {
 
 #if defined(__FreeBSD__) || defined(__DragonFly__)
     len = 0;
-    r = sendfile(in_fd, out_fd, req->off, req->bufsml[0].len, NULL, &len, 0);
+    r = sendfile(in_fd, out_fd, req->off, req->timeout_buf->io_bufs[0].len, NULL, &len, 0);
 #elif defined(__FreeBSD_kernel__)
     len = 0;
     r = bsd_sendfile(in_fd,
                      out_fd,
                      req->off,
-                     req->bufsml[0].len,
+                     req->timeout_buf->io_bufs[0].len,
                      NULL,
                      &len,
                      0);
 #else
     /* The darwin sendfile takes len as an input for the length to send,
      * so make sure to initialize it with the caller's value. */
-    len = req->bufsml[0].len;
+    len = req->timeout_buf->io_bufs[0].len;
     r = sendfile(in_fd, out_fd, req->off, &len, NULL, 0);
 #endif
 
@@ -1169,7 +1335,7 @@ static ssize_t uv__fs_utime(uv_fs_t* req) {
   struct utimbuf buf;
   buf.actime = req->atime;
   buf.modtime = req->mtime;
-  return utime(req->path, &buf); /* TODO use utimes() where available */
+  return utime(req->timeout_buf->path, &buf); /* TODO use utimes() where available */
 }
 
 
@@ -1189,6 +1355,13 @@ static ssize_t uv__fs_write(uv_fs_t* req) {
   if (pthread_mutex_lock(&lock))
     abort();
 #endif
+
+  /* Caller is supposed to have set req->bufs to point to some buf allocated in req->bufs. */
+	if (req->bufs <= req->bufs &&
+		  req->bufs < req->bufs + req->nbufs) {
+	}
+	else
+		abort();
 
   if (req->off < 0) {
     if (req->nbufs == 1)
@@ -1251,6 +1424,7 @@ done:
   return r;
 }
 
+/* TODO fd leak. We could save srcfd and dstfd in req->timeout_buf so that if the second uv_fs_open times out, we can still clean up srcfd. */
 static ssize_t uv__fs_copyfile(uv_fs_t* req) {
 #if defined(__APPLE__) && !TARGET_OS_IPHONE
   /* On macOS, use the native copyfile(3). */
@@ -1261,7 +1435,7 @@ static ssize_t uv__fs_copyfile(uv_fs_t* req) {
   if (req->flags & UV_FS_COPYFILE_EXCL)
     flags |= COPYFILE_EXCL;
 
-  return copyfile(req->path, req->new_path, NULL, flags);
+  return copyfile(req->timeout_buf->path, req->timeout_buf->new_path, NULL, flags);
 #else
   uv_fs_t fs_req;
   uv_file srcfd;
@@ -1276,8 +1450,11 @@ static ssize_t uv__fs_copyfile(uv_fs_t* req) {
   dstfd = -1;
   err = 0;
 
+  /* TODO Not supported due to fd2ino leak below in uv__close_nocheckstdio. */
+	abort();
+
   /* Open the source file. */
-  srcfd = uv_fs_open(NULL, &fs_req, req->path, O_RDONLY, 0, NULL);
+  srcfd = uv_fs_open(NULL, &fs_req, req->timeout_buf->path, O_RDONLY, 0, NULL);
   uv_fs_req_cleanup(&fs_req);
 
   if (srcfd < 0)
@@ -1297,7 +1474,7 @@ static ssize_t uv__fs_copyfile(uv_fs_t* req) {
   /* Open the destination file. */
   dstfd = uv_fs_open(NULL,
                      &fs_req,
-                     req->new_path,
+                     req->timeout_buf->new_path,
                      dst_flags,
                      statsbuf.st_mode,
                      NULL);
@@ -1337,6 +1514,7 @@ out:
     result = 0;
 
   /* Close the source file. */
+	/* TODO We uv_fs_open'd so fd2ino has a mapping but we never delete this mapping. */
   err = uv__close_nocheckstdio(srcfd);
 
   /* Don't overwrite any existing errors. */
@@ -1345,6 +1523,7 @@ out:
 
   /* Close the destination file if it is open. */
   if (dstfd >= 0) {
+		/* TODO We uv_fs_open'd so fd2ino has a mapping but we never delete this mapping. */
     err = uv__close_nocheckstdio(dstfd);
 
     /* Don't overwrite any existing errors. */
@@ -1353,7 +1532,7 @@ out:
 
     /* Remove the destination file if something went wrong. */
     if (result != 0) {
-      uv_fs_unlink(NULL, &fs_req, req->new_path, NULL);
+      uv_fs_unlink(NULL, &fs_req, req->timeout_buf->new_path, NULL);
       /* Ignore the unlink return value, as an error already happened. */
       uv_fs_req_cleanup(&fs_req);
     }
@@ -1490,23 +1669,22 @@ static int uv__fs_close(uv_fs_t *req) {
 		fd2ino_delete(req->file);
 	mark_cancelable();
 
-  /* If we time this out, we might leak: fd. */
+  /* If we time this out, close might leak: fd. */
 	ret = close(req->file);
 	return ret;
 }
 
-
+/* TODO Whoever is using this should reference req->bufs, not req->timeout_bufs->io_bufs.
+ * This function points req->bufs into req->timeout_bufs->io_bufs so it's timeout-safe. */
 typedef ssize_t (*uv__fs_buf_iter_processor)(uv_fs_t* req);
 static ssize_t uv__fs_buf_iter(uv_fs_t* req, uv__fs_buf_iter_processor process) {
   unsigned int iovmax;
   unsigned int nbufs;
-  uv_buf_t* bufs;
   ssize_t total;
   ssize_t result;
 
   iovmax = uv__getiovmax();
-  nbufs = req->nbufs;
-  bufs = req->bufs;
+  nbufs = req->timeout_buf->io_nbufs;
   total = 0;
 
   while (nbufs > 0) {
@@ -1531,12 +1709,6 @@ static ssize_t uv__fs_buf_iter(uv_fs_t* req, uv__fs_buf_iter_processor process) 
 
   if (errno == EINTR && total == -1)
     return total;
-
-  if (bufs != req->bufsml)
-    uv__free(bufs);
-
-  req->bufs = NULL;
-  req->nbufs = 0;
 
   return total;
 }
@@ -1565,9 +1737,9 @@ static void uv__fs_work(struct uv__work* w) {
     break;
 
     switch (req->fs_type) {
-    X(ACCESS, access(req->path, req->flags));
-    X(CHMOD, chmod(req->path, req->mode));
-    X(CHOWN, chown(req->path, req->uid, req->gid));
+    X(ACCESS, access(req->timeout_buf->path, req->flags));
+    X(CHMOD, chmod(req->timeout_buf->path, req->mode));
+    X(CHOWN, chown(req->timeout_buf->path, req->uid, req->gid));
     X(CLOSE, uv__fs_close(req));
     X(COPYFILE, uv__fs_copyfile(req));
     X(FCHMOD, fchmod(req->file, req->mode));
@@ -1577,21 +1749,21 @@ static void uv__fs_work(struct uv__work* w) {
     X(FSYNC, uv__fs_fsync(req));
     X(FTRUNCATE, ftruncate(req->file, req->off));
     X(FUTIME, uv__fs_futime(req));
-    X(LSTAT, uv__fs_lstat(req->path, &req->statbuf));
-    X(LINK, link(req->path, req->new_path));
-    X(MKDIR, mkdir(req->path, req->mode));
+    X(LSTAT, uv__fs_lstat(req->timeout_buf->path, &req->statbuf));
+    X(LINK, link(req->timeout_buf->path, req->timeout_buf->new_path));
+    X(MKDIR, mkdir(req->timeout_buf->path, req->mode));
     X(MKDTEMP, uv__fs_mkdtemp(req));
     X(OPEN, uv__fs_open(req));
     X(READ, uv__fs_buf_iter(req, uv__fs_read));
     X(SCANDIR, uv__fs_scandir(req));
     X(READLINK, uv__fs_readlink(req));
     X(REALPATH, uv__fs_realpath(req));
-    X(RENAME, rename(req->path, req->new_path));
-    X(RMDIR, rmdir(req->path));
+    X(RENAME, rename(req->timeout_buf->path, req->timeout_buf->new_path));
+    X(RMDIR, rmdir(req->timeout_buf->path));
     X(SENDFILE, uv__fs_sendfile(req));
-    X(STAT, uv__fs_stat(req->path, &req->statbuf));
-    X(SYMLINK, symlink(req->path, req->new_path));
-    X(UNLINK, unlink(req->path));
+    X(STAT, uv__fs_stat(req->timeout_buf->path, &req->statbuf));
+    X(SYMLINK, symlink(req->timeout_buf->path, req->timeout_buf->new_path));
+    X(UNLINK, unlink(req->timeout_buf->path));
     X(UTIME, uv__fs_utime(req));
     X(WRITE, uv__fs_buf_iter(req, uv__fs_write));
     default: abort();
@@ -1624,7 +1796,11 @@ static uint64_t uv__fs_timed_out(struct uv__work* w, void **dat) {
 
 	/* Resource management policy: conservatively mark all resources involved as dangerous. */
 	mark_resources_slow(req);
-	*dat = NULL;
+
+  /* Share timeout_buf with uv__fs_killed for cleanup in the later of uv_fs_req_cleanup, uv__fs_killed. */
+	dprintf(2, "uv__fs_timed_out: Adding ref to buf %p\n", req->timeout_buf);
+	*dat = req->timeout_buf;
+	uv__fs_buf_ref(req->timeout_buf);
 
   /* Tell threadpool to abort the Task. */
 	return 0;
@@ -1650,10 +1826,19 @@ static void uv__fs_done(struct uv__work* w, int status) {
 
 
 static void uv__fs_killed(void *dat) {
-	/* Resource management policy:
-	 * The blacklist is permanent, so there's nothing to undo here. */
+	uv__fs_buf_t *buf;
 
-  /* TODO Various calls use uv__malloc and we must uv__free them here to ensure no leaked memory. */
+	buf = (uv__fs_buf_t *) dat;
+	if (buf == NULL)
+		abort();
+
+	/* Resource management policy:
+	 *   The blacklist is permanent, so there's nothing to undo here. */
+
+  /* Calls that touch memory do so in memory stored in the req->timeout_buf for timeout-safety.
+	 * The later of us and uv_fs_req_cleanup should clean it up. */
+	dprintf(2, "uv__fs_killed: unref'ing buf %p\n", buf);
+	uv__fs_buf_unref(buf);
 }
 
 
@@ -1806,15 +1991,10 @@ int uv_fs_mkdir(uv_loop_t* loop,
 
 int uv_fs_mkdtemp(uv_loop_t* loop,
                   uv_fs_t* req,
-                  const char* tpl,
+                  const char* path,
                   uv_fs_cb cb) {
   INIT(MKDTEMP);
-  req->path = uv__strdup(tpl);
-  if (req->path == NULL) {
-    if (cb != NULL)
-      uv__req_unregister(loop, req);
-    return -ENOMEM;
-  }
+	PATH;
   POST;
 }
 
@@ -1839,6 +2019,8 @@ int uv_fs_read(uv_loop_t* loop, uv_fs_t* req,
                unsigned int nbufs,
                int64_t off,
                uv_fs_cb cb) {
+	int rc;
+
   INIT(READ);
 
   if (bufs == NULL || nbufs == 0)
@@ -1846,18 +2028,13 @@ int uv_fs_read(uv_loop_t* loop, uv_fs_t* req,
 
   req->file = file;
 
-  req->nbufs = nbufs;
-  req->bufs = req->bufsml;
-  if (nbufs > ARRAY_SIZE(req->bufsml))
-    req->bufs = uv__malloc(nbufs * sizeof(*bufs));
+  rc = uv__fs_buf_copy_io_bufs(req->timeout_buf, bufs, nbufs);
 
-  if (req->bufs == NULL) {
+  if (rc) {
     if (cb != NULL)
       uv__req_unregister(loop, req);
     return -ENOMEM;
   }
-
-  memcpy(req->bufs, bufs, nbufs * sizeof(*bufs));
 
   req->off = off;
   POST;
@@ -1925,7 +2102,7 @@ int uv_fs_sendfile(uv_loop_t* loop,
   req->flags = in_fd; /* hack */
   req->file = out_fd;
   req->off = off;
-  req->bufsml[0].len = len;
+  req->timeout_buf->io_bufs[0].len = len;
   POST;
 }
 
@@ -1978,6 +2155,7 @@ int uv_fs_write(uv_loop_t* loop,
                 unsigned int nbufs,
                 int64_t off,
                 uv_fs_cb cb) {
+	int rc;
   INIT(WRITE);
 
   if (bufs == NULL || nbufs == 0)
@@ -1985,18 +2163,12 @@ int uv_fs_write(uv_loop_t* loop,
 
   req->file = file;
 
-  req->nbufs = nbufs;
-  req->bufs = req->bufsml;
-  if (nbufs > ARRAY_SIZE(req->bufsml))
-    req->bufs = uv__malloc(nbufs * sizeof(*bufs));
-
-  if (req->bufs == NULL) {
+  rc = uv__fs_buf_copy_io_bufs(req->timeout_buf, bufs, nbufs);
+  if (rc) {
     if (cb != NULL)
       uv__req_unregister(loop, req);
     return -ENOMEM;
   }
-
-  memcpy(req->bufs, bufs, nbufs * sizeof(*bufs));
 
   req->off = off;
   POST;
@@ -2004,25 +2176,26 @@ int uv_fs_write(uv_loop_t* loop,
 
 
 void uv_fs_req_cleanup(uv_fs_t* req) {
+
   if (req == NULL)
     return;
 
-  /* Only necessary for asychronous requests, i.e., requests with a callback.
-   * Synchronous ones don't copy their arguments and have req->path and
-   * req->new_path pointing to user-owned memory.  UV_FS_MKDTEMP is the
-   * exception to the rule, it always allocates memory.
-   */
-  if (req->path != NULL && (req->cb != NULL || req->fs_type == UV_FS_MKDTEMP))
-    uv__free((void*) req->path);  /* Memory is shared with req->new_path. */
+	/* Clean up any timeout-safe memory if we have the last reference. */
+	if (req->timeout_buf != NULL) {
+		dprintf(2, "uv__fs_req_cleanup: unref'ing buf %p\n", req->timeout_buf);
+		uv__fs_buf_unref(req->timeout_buf);
+		req->timeout_buf = NULL;
+	}
 
   req->path = NULL;
-  req->new_path = NULL;
 
   if (req->fs_type == UV_FS_SCANDIR && req->ptr != NULL)
     uv__fs_scandir_cleanup(req);
 
+/* req->ptr only points to things in req->timeout_buf which we already de-allocated above.
   if (req->ptr != &req->statbuf)
     uv__free(req->ptr);
+*/
   req->ptr = NULL;
 }
 

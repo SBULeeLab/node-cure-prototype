@@ -80,6 +80,25 @@
 # define UV_IO_PRIVATE_PLATFORM_FIELDS /* empty */
 #endif
 
+#define UV_ONCE_INIT PTHREAD_ONCE_INIT
+#define UV_CANCEL_ENABLE PTHREAD_CANCEL_ENABLE
+#define UV_CANCEL_DISABLE PTHREAD_CANCEL_DISABLE
+#define UV_CANCEL_DEFERRED PTHREAD_CANCEL_DEFERRED
+#define UV_CANCEL_ASYNCHRONOUS PTHREAD_CANCEL_ASYNCHRONOUS
+
+#ifndef UV_PLATFORM_SEM_T
+# define UV_PLATFORM_SEM_T sem_t
+#endif
+
+typedef pthread_once_t uv_once_t;
+typedef pthread_t uv_thread_t;
+typedef pthread_mutex_t uv_mutex_t;
+typedef pthread_rwlock_t uv_rwlock_t;
+typedef UV_PLATFORM_SEM_T uv_sem_t;
+typedef pthread_cond_t uv_cond_t;
+typedef pthread_key_t uv_key_t;
+typedef pthread_barrier_t uv_barrier_t;
+
 struct uv__io_s;
 struct uv_loop_s;
 
@@ -113,9 +132,30 @@ struct uv__getaddrinfo_buf_s {
   struct addrinfo* addrinfo;
 };
 
-#ifndef UV_PLATFORM_SEM_T
-# define UV_PLATFORM_SEM_T sem_t
-#endif
+/* Note: May be cast to struct iovec. See writev(2). */
+typedef struct uv_buf_t {
+  char* base;
+  size_t len;
+} uv_buf_t;
+
+typedef struct uv__fs_buf_s uv__fs_buf_t;
+struct uv__fs_buf_s {
+	/* read, write */
+	uv_buf_t *io_bufs;
+	char **io_orig_bases;
+	unsigned int io_nbufs;
+
+	/* realpath, readlink, link, rename, symlink, copyfile */ 
+	char *path;
+	char *new_path;
+
+  /* realpath */
+	char *tmp_path;
+
+  /* Cleaned up in the later of {uv_fs_req_cleanup, uv__fs_killed}. */
+  uv_mutex_t mutex;
+	int refcount;
+};
 
 #ifndef UV_PLATFORM_LOOP_FIELDS
 # define UV_PLATFORM_LOOP_FIELDS /* empty */
@@ -129,31 +169,9 @@ struct uv__getaddrinfo_buf_s {
 # define UV_STREAM_PRIVATE_PLATFORM_FIELDS /* empty */
 #endif
 
-/* Note: May be cast to struct iovec. See writev(2). */
-typedef struct uv_buf_t {
-  char* base;
-  size_t len;
-} uv_buf_t;
-
 typedef int uv_file;
 typedef int uv_os_sock_t;
 typedef int uv_os_fd_t;
-
-#define UV_ONCE_INIT PTHREAD_ONCE_INIT
-#define UV_CANCEL_ENABLE PTHREAD_CANCEL_ENABLE
-#define UV_CANCEL_DISABLE PTHREAD_CANCEL_DISABLE
-#define UV_CANCEL_DEFERRED PTHREAD_CANCEL_DEFERRED
-#define UV_CANCEL_ASYNCHRONOUS PTHREAD_CANCEL_ASYNCHRONOUS
-
-typedef pthread_once_t uv_once_t;
-typedef pthread_t uv_thread_t;
-typedef pthread_mutex_t uv_mutex_t;
-typedef pthread_rwlock_t uv_rwlock_t;
-typedef UV_PLATFORM_SEM_T uv_sem_t;
-typedef pthread_cond_t uv_cond_t;
-typedef pthread_key_t uv_key_t;
-typedef pthread_barrier_t uv_barrier_t;
-
 
 /* Platform-specific definitions for uv_spawn support. */
 typedef gid_t uv_gid_t;
@@ -344,8 +362,8 @@ typedef struct {
   void* queue[2];                                                             \
   int status;                                                                 \
 
+/* NB bufs, nbufs are pointers to timeout_buf->io_bufs */
 #define UV_FS_PRIVATE_FIELDS                                                  \
-  const char *new_path;                                                       \
   uv_file file;                                                               \
   int flags;                                                                  \
   mode_t mode;                                                                \
@@ -357,7 +375,7 @@ typedef struct {
   double atime;                                                               \
   double mtime;                                                               \
   struct uv__work work_req;                                                   \
-  uv_buf_t bufsml[4];                                                         \
+	uv__fs_buf_t *timeout_buf;                                                  \
 
 #define UV_WORK_PRIVATE_FIELDS                                                \
   struct uv__work work_req;
