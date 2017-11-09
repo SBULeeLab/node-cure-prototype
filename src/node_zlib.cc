@@ -73,6 +73,12 @@ enum node_zlib_mode {
 class ZCtx : public AsyncWrap {
  public:
 
+  typedef struct ZCtx_semas_s {
+		uv_sem_t process; /* For After and After_sync2async. */
+		uv_sem_t sync2async; /* For Write and After_sync2async. */
+		int timed_out; /* Can't trust err_ after a timeout. */
+	} ZCtx_semas_t;
+
   ZCtx(Environment* env, Local<Object> wrap, node_zlib_mode mode)
       : AsyncWrap(env, wrap, AsyncWrap::PROVIDER_ZLIB),
         dictionary_(nullptr),
@@ -200,13 +206,34 @@ class ZCtx : public AsyncWrap {
     ctx->strm_.next_out = out;
     ctx->flush_ = flush;
 
+		ZCtx_semas_t *semas = new ZCtx_semas_t;
+		CHECK(semas != NULL); /* Hmmm. */
+		CHECK_EQ(0, uv_sem_init(&semas->process, 0));
+		CHECK_EQ(0, uv_sem_init(&semas->sync2async, 0));
+		work_req->data = semas; /* Share with worker. */
+
     if (!async) {
       // sync version
       ctx->env()->PrintSyncTrace();
-      Process(work_req);
+
+			uv_queue_work_prio(ctx->env()->event_loop(),
+										work_req,
+										ZCtx::Process,
+										ZCtx::TimedOut,
+										ZCtx::After_sync2async,
+										ZCtx::Killed);
+			dprintf(2, "ZCtx::Write: Waiting for prio work to finish\n");
+			uv_sem_wait(&semas->sync2async);
+
+			/* We are the last users of semas. */
+			uv_sem_destroy(&semas->process);
+			uv_sem_destroy(&semas->sync2async);
+			delete semas;
+
+			dprintf(2, "ZCtx::Write: Wrapping up\n");
       if (CheckError(ctx))
         AfterSync(ctx, args);
-      return;
+			return;
     }
 
     // async version
@@ -359,27 +386,22 @@ class ZCtx : public AsyncWrap {
 	// Recovery: - ask libuv to kill the runaway thread (should be quick, it's just burning the CPU)
 	//           - don't return in After until the runaway thread is dead
   static uint64_t TimedOut(uv_work_t* work_req, void **dat) {
-		uv_sem_t *sem = new uv_sem_t;
-		if (sem == NULL)
-			abort();
-
-		dprintf(2, "ZCtx::TimedOut: Timed out, created semaphore for After to wait on: %p\n", sem);
-
-		uv_sem_init(sem, 0);
-
-		*dat = sem; // post in Killed
-		work_req->data = sem; // wait in After
-
+		dprintf(2, "ZCtx::TimedOut: Timed out\n");
+		*dat = work_req->data; // post in Killed
 		return 0;
 	}
 
   static void Killed(void *dat) {
 		dprintf(2, "ZCtx::Killed: Killed, post'ing\n"); 
-		uv_sem_post((uv_sem_t *) dat);
+		ZCtx_semas_t *semas = (ZCtx_semas_t *) dat;
+		CHECK(semas != NULL);
+		uv_sem_post(&semas->process);
 		return;
 	}
 
 
+  /* If an error occurred, invokes CB with the error and returns false.
+	 * Otherwise returns true and you should return success. */
   static bool CheckError(ZCtx* ctx) {
     // Acceptable error states depend on the type of zlib stream.
     switch (ctx->err_) {
@@ -398,6 +420,9 @@ class ZCtx : public AsyncWrap {
       else
         ZCtx::Error(ctx, "Bad dictionary");
       return false;
+		case ETIMEDOUT:
+			ZCtx::Error(ctx, "Timed out");
+			return false;
     default:
       // something else.
       ZCtx::Error(ctx, "Zlib error");
@@ -411,21 +436,29 @@ class ZCtx : public AsyncWrap {
   // v8 land!
   static void After(uv_work_t* work_req, int status) {
 
+    ZCtx* ctx = ContainerOf(&ZCtx::work_req_, work_req);
+		CHECK(ctx != NULL);
+		ZCtx_semas_t *semas = (ZCtx_semas_t *) work_req->data;
+		CHECK(semas != NULL);
+
     // We don't know what's happening in zlib, but it's not a syscall so it won't block forever.
 		// We wait for the thread running Process() to be killed and then we can safely abort.
 		if (status == -ETIMEDOUT) {
-			uv_sem_t *sem = (uv_sem_t *) work_req->data;
-			dprintf(2, "ZCtx::After: ETIMEDOUT, waiting for Process() to die (sem %p)\n", sem);
-			uv_sem_wait(sem);
+			dprintf(2, "ZCtx::After: ETIMEDOUT, waiting for Process() to die (semas %p)\n", semas);
+			uv_sem_wait(&semas->process);
 			// Now on timeout, the Process thread has been killed, so our memory is safe.
-
-			uv_sem_destroy(sem);
-			delete sem;
+			semas->timed_out = 1;
+			ctx->err_ = ETIMEDOUT;
 		}
 		else
 			CHECK_EQ(status, 0);
 
-    ZCtx* ctx = ContainerOf(&ZCtx::work_req_, work_req);
+    /* Nobody is using these now. */
+		uv_sem_destroy(&semas->process);
+		uv_sem_destroy(&semas->sync2async);
+		delete semas;
+		semas = NULL;
+
     Environment* env = ctx->env();
 
     HandleScope handle_scope(env->isolate());
@@ -448,6 +481,32 @@ class ZCtx : public AsyncWrap {
     ctx->Unref();
     if (ctx->pending_close_)
       ctx->Close();
+  }
+
+  // Run *not* in V8-land, but on a libuv thread.
+  static void After_sync2async(uv_work_t* work_req, int status) {
+    ZCtx* ctx = ContainerOf(&ZCtx::work_req_, work_req);
+		ZCtx_semas_t *semas = (ZCtx_semas_t *) work_req->data;
+
+    // We don't know what's happening in zlib, but it's not a syscall so it won't block forever.
+		// We wait for the thread running Process() to be killed and then we can safely abort.
+		if (status == -ETIMEDOUT) {
+			CHECK(semas != NULL);
+
+			dprintf(2, "ZCtx::After_sync2async: ETIMEDOUT, waiting for Process() to die (semas %p)\n", semas);
+			uv_sem_wait(&semas->process);
+			// Now on timeout, the Process thread has been killed, so our memory is safe.
+			semas->timed_out = 1;
+			ctx->err_ = ETIMEDOUT;
+		}
+		else
+			CHECK_EQ(status, 0);
+
+		// Signal caller that we're done
+		dprintf(2, "ZCtx::After_sync2async: Telling caller we're done\n");
+		uv_sem_post(&semas->sync2async);
+		/* Caller is using semas, don't delete it. */
+		return;
   }
 
   static void Error(ZCtx* ctx, const char* message) {
