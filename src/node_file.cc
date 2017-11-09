@@ -397,6 +397,8 @@ class fs_req_wrap {
 #define ASYNC_CALL(func, req, encoding, ...)                                  \
   ASYNC_DEST_CALL(func, req, nullptr, encoding, __VA_ARGS__)                  \
 
+/* On error, a SYNC_CALL ThrowUVException, and I made ThrowUVException timeout-aware.
+ * Makes sense because the sync calls will throw things like EINVAL and EBADF already. */
 #define SYNC_DEST_CALL(func, path, dest, ...)                                 \
   fs_req_wrap req_wrap;                                                       \
   env->PrintSyncTrace();                                                      \

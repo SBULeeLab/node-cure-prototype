@@ -719,6 +719,9 @@ static uv__fs_buf_t * uv__fs_buf_create (void) {
 
 	if (uv_mutex_init(&buf->mutex) != 0)
 		abort();
+	
+	if (uv_sem_init(&buf->done, 0) != 0)
+		abort();
 
 	buf->refcount = 0; 
 
@@ -781,6 +784,8 @@ static void uv__fs_buf_destroy (uv__fs_buf_t *buf) {
 	}
 
 	uv_mutex_destroy(&buf->mutex);
+	uv_sem_destroy(&buf->done);
+
 	uv__free(buf);
 	buf = NULL;
 }
@@ -966,7 +971,7 @@ static void sync_timeout_buf (uv_fs_t *req, int success) {
     req->timeout_buf->path = uv__strdup(path);                                \
     if (req->timeout_buf->path == NULL) {                                     \
 			uv__fs_buf_unref(req->timeout_buf);                                     \
-      uv__req_unregister(loop, req);                                          \
+      if (req->cb) uv__req_unregister(loop, req);                             \
       return -ENOMEM;                                                         \
     }                                                                         \
   }                                                                           \
@@ -981,7 +986,7 @@ static void sync_timeout_buf (uv_fs_t *req, int success) {
     req->timeout_buf->path = uv__malloc(path_len + new_path_len);             \
     if (req->timeout_buf->path == NULL) {                                     \
 		  uv__fs_buf_unref(req->timeout_buf);                                     \
-      uv__req_unregister(loop, req);                                          \
+      if (req->cb) uv__req_unregister(loop, req);                             \
       return -ENOMEM;                                                         \
     }                                                                         \
     req->timeout_buf->new_path = req->timeout_buf->path + path_len;           \
@@ -990,15 +995,17 @@ static void sync_timeout_buf (uv_fs_t *req, int success) {
   }                                                                           \
   while (0)
 
+/* POST: With cb, take normal path. Without, submit prio work and wait for it to complete. */
 #define POST                                                                  \
   do {                                                                        \
-    if (cb != NULL) {                                                         \
-      uv__work_submit(loop, &req->work_req, uv__fs_work, uv__fs_timed_out, uv__fs_done, uv__fs_killed);        \
-      return 0;                                                               \
+    if (cb == NULL) {                                                         \
+      uv__work_submit_prio(loop, &req->work_req, uv__fs_work, uv__fs_timed_out, uv__fs_done_sync, uv__fs_killed);        \
+			uv_sem_wait(&req->timeout_buf->done);                                   \
+      return req->result;                                                     \
     }                                                                         \
     else {                                                                    \
-      uv__fs_work(&req->work_req);                                            \
-      return req->result;                                                     \
+      uv__work_submit(loop, &req->work_req, uv__fs_work, uv__fs_timed_out, uv__fs_done, uv__fs_killed);        \
+      return 0;                                                               \
     }                                                                         \
   }                                                                           \
   while (0)
@@ -2091,25 +2098,55 @@ static uint64_t uv__fs_timed_out(struct uv__work* w, void **dat) {
 	return 0;
 }
 
+#define UV__FS_DONE_INIT(w, status)                     \
+  do {                                                  \
+		req = container_of(w, uv_fs_t, work_req);           \
+		uv__req_unregister(req->loop, req);                 \
+																										    \
+		if (status == -ECANCELED) {                         \
+			assert(req->result == 0);                         \
+			req->result = -ECANCELED;                         \
+		}                                                   \
+		else if (status == -ETIMEDOUT) {                    \
+			req->result = -ETIMEDOUT;                         \
+		}                                                   \
+	}                                                     \
+	while(0)
+
 static void uv__fs_done(struct uv__work* w, int status) {
   uv_fs_t* req;
 
-  req = container_of(w, uv_fs_t, work_req);
-  uv__req_unregister(req->loop, req);
+	req = container_of(w, uv_fs_t, work_req);
+	uv__req_unregister(req->loop, req);
 
-	if (status == 0) {
-		/* Copy data from req->timeout_buf to req. */
-		dprintf(2, "uv__fs_done: Success!\n");
-	}
-  else if (status == -ECANCELED) {
-    assert(req->result == 0);
+	if (status == -ECANCELED) {
+		assert(req->result == 0);
 		req->result = -ECANCELED;
 	}
 	else if (status == -ETIMEDOUT) {
 		req->result = -ETIMEDOUT;
 	}
 
+  dprintf(2, "uv__fs_done: req %p done, calling cb\n", req);
   req->cb(req);
+}
+
+static void uv__fs_done_sync(struct uv__work* w, int status) {
+  uv_fs_t* req;
+
+	req = container_of(w, uv_fs_t, work_req);
+	/* We never uv__req_init'd (-> uv__req_register), so unlike uv__fs_done, don't unregister. */
+
+	if (status == -ECANCELED) {
+		assert(req->result == 0);
+		req->result = -ECANCELED;
+	}
+	else if (status == -ETIMEDOUT) {
+		req->result = -ETIMEDOUT;
+	}
+
+  dprintf(2, "uv__fs_done_sync: req %p done, post'ing\n", req);
+  uv_sem_post(&req->timeout_buf->done);
 }
 
 
