@@ -102,6 +102,17 @@ typedef pthread_barrier_t uv_barrier_t;
 struct uv__io_s;
 struct uv_loop_s;
 
+typedef int uv_file;
+typedef int uv_os_sock_t;
+typedef int uv_os_fd_t;
+
+/* Platform-specific definitions for uv_spawn support. */
+typedef gid_t uv_gid_t;
+typedef uid_t uv_uid_t;
+
+typedef struct dirent uv__dirent_t;
+
+
 typedef void (*uv__io_cb)(struct uv_loop_s* loop,
                           struct uv__io_s* w,
                           unsigned int events);
@@ -140,6 +151,12 @@ typedef struct uv_buf_t {
 
 typedef struct uv__fs_buf_s uv__fs_buf_t;
 struct uv__fs_buf_s {
+  /* Resources. Safe place to put these for reference on timeout. */
+	int resources_set; /* If this is set, these resources are valid. */
+	unsigned rph; /* If resources_set, always known. */
+	ino_t ino; /* If resources_set, always known. */
+	uv_file file; /* -1 means not known. */
+
 	/* read, write */
 	uv_buf_t *io_bufs;
 	char **io_orig_bases;
@@ -171,16 +188,6 @@ struct uv__fs_buf_s {
 #ifndef UV_STREAM_PRIVATE_PLATFORM_FIELDS
 # define UV_STREAM_PRIVATE_PLATFORM_FIELDS /* empty */
 #endif
-
-typedef int uv_file;
-typedef int uv_os_sock_t;
-typedef int uv_os_fd_t;
-
-/* Platform-specific definitions for uv_spawn support. */
-typedef gid_t uv_gid_t;
-typedef uid_t uv_uid_t;
-
-typedef struct dirent uv__dirent_t;
 
 #if defined(DT_UNKNOWN)
 # define HAVE_DIRENT_TYPES
