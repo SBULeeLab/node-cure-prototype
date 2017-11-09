@@ -981,6 +981,7 @@ struct uv_work_s {
   UV_WORK_PRIVATE_FIELDS
 };
 
+/* Standard work submit. */
 UV_EXTERN int uv_queue_work(uv_loop_t* loop,
                             uv_work_t* req,
                             uv_work_cb work_cb,
@@ -988,6 +989,26 @@ UV_EXTERN int uv_queue_work(uv_loop_t* loop,
                             uv_after_work_cb after_work_cb,
                             uv_killed_cb killed_cb
 														);
+
+/* Priority work submit. "Jump the work queue".
+ * As implemented, you may have only one call to uv_queue_work_prio active at a time.
+ *   - Your after_work_cb should synchronize with whoever submitted the request.
+ *   - None of the CBs should queue additional prio work.
+ *
+ * UNLIKE uv_queue_work, *all* CBs are invoked not on the main thread.
+ * In particular this includes uv_after_work_cb.
+ *
+ * Your uv_after_work_cb should not block.
+ * Just unpack the data from your request.
+ */
+UV_EXTERN int uv_queue_work_prio(uv_loop_t* loop,
+                            uv_work_t* req,
+                            uv_work_cb work_cb,
+                            uv_timed_out_cb timed_out_cb,
+                            uv_after_work_cb after_work_cb,
+                            uv_killed_cb killed_cb
+														);
+
 
 UV_EXTERN int uv_cancel(uv_req_t* req);
 

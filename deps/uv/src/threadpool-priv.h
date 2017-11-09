@@ -57,6 +57,7 @@ void uv__manager_timer (uv_timer_t *handle);
  */
 struct uv__executor_s {
 	int id;
+	int prio;
 	uv__manager_t manager; /* Static */
 	uv__worker_t *worker; /* May change. */
 };
@@ -66,7 +67,7 @@ struct uv__executor_s {
  * Spawns two threads: manager and worker.
  * Returns non-zero on failure.
  */
-int uv__executor_init (uv__executor_t *e);
+int uv__executor_init (uv__executor_t *e, int prio);
 
 /**
  * Clean up the manager and worker threads.
@@ -88,12 +89,13 @@ int uv__executor_new_worker (uv__executor_t *e);
 struct uv__worker_s {
 	uv_thread_t tid; /* Needed for cleanup by hangman. */
 	uv__executor_channel_t *channel;
+	int prio;
 };
 
 /* Returns non-zero on failure. */
-int launch_worker (uv__worker_t *worker, uv__executor_channel_t *channel);
+int launch_worker (uv__worker_t *worker, uv__executor_channel_t *channel, int prio);
 
-/* Entry point for a worker. */
+/* Entry point for a worker, prio or not. */
 void worker (void *w);
 
 /**

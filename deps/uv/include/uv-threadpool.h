@@ -35,6 +35,8 @@ struct uv__work {
   struct uv_loop_s* loop;
   void* wq[2]; /* QUEUE_EMPTY(&wq) when work() is active. */
 
+	int prio; /* uv__work_submit_prio */
+
 	/* FOR DEBUGGING.
 	 * Managed by the default uv__queue_X APIs for callers of uv_queue_work. */
 	int state_queued;

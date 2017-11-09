@@ -113,12 +113,21 @@ void uv__fs_poll_close(uv_fs_poll_t* handle);
 
 int uv__getaddrinfo_translate_error(int sys_err);    /* EAI_* error. */
 
-/* Internal entrace into threadpool. */
+/* Internal entrances into threadpool. */
+/* See uv_queue_work. */
 void uv__work_submit(uv_loop_t* loop,
                      struct uv__work *w,
                      void (*work)(struct uv__work *w),
                      uint64_t (*timed_out)(struct uv__work *w, void **data), /* See uv_timed_out_cb. */
                      void (*done)(struct uv__work* w, int status),
+                     void (*killed)(void *arg)); /* See uv_killed_cb. */
+
+/* See uv_queue_work_prio. */
+void uv__work_submit_prio(uv_loop_t* loop,
+                     struct uv__work *w,
+                     void (*work)(struct uv__work *w),
+                     uint64_t (*timed_out)(struct uv__work *w, void **data), /* See uv_timed_out_cb. */
+                     void (*done)(struct uv__work* w, int status), /* CALLED NOT ON THE MAIN THREAD. */
                      void (*killed)(void *arg)); /* See uv_killed_cb. */
 
 void uv__work_done(uv_async_t* handle);

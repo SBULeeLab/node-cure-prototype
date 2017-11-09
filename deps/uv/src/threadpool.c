@@ -85,15 +85,24 @@ void uv_log (int verbosity, const char *format, ... ){
 #endif
 
 static uv_once_t once = UV_ONCE_INIT;
-static uv_cond_t cond;
-static uv_mutex_t mutex;
+static unsigned int default_work_timeout_ms = 500;
+
 static unsigned int idle_executors;
 static unsigned int n_executors;
-static unsigned int default_work_timeout_ms = 500;
-static uv__executor_t* executors;
+static uv__executor_t* executors = NULL;
 static uv__executor_t default_executors[4];
 static QUEUE exit_message;
 static QUEUE wq; /* New work is queued to wq and popped by workers. */
+static uv_cond_t cond;
+static uv_mutex_t mutex;
+
+static uv__executor_t prio_executor;
+static unsigned int prio_idle_executors;
+static QUEUE prio_exit_message;
+static QUEUE prio_wq;
+static uv_mutex_t prio_mutex;
+static uv_cond_t prio_cond;
+
 static volatile int initialized;
 
 static int uv__manager_init (uv__manager_t *mgr);
@@ -102,8 +111,11 @@ static void uv__cancelled(struct uv__work* w) {
   abort();
 }
 
+/* For non-prio work. */
 static void queue_completed_work (struct uv__work *w) {
 	if (w == NULL) abort();
+
+	if (w->prio) abort();
 
 	uv_mutex_lock(&w->loop->wq_mutex);
 
@@ -112,6 +124,29 @@ static void queue_completed_work (struct uv__work *w) {
 	QUEUE_INSERT_TAIL(&w->loop->wq, &w->wq);
 	uv_async_send(&w->loop->wq_async);
 	uv_mutex_unlock(&w->loop->wq_mutex);
+}
+
+/* For a worker on completed work, or a hangman in its victim's stead. */
+static void worker_handle_completed_work (struct uv__work *w) {
+	if (w == NULL) abort();
+
+	if (w->prio) {
+		int err;
+		/* Work is done. We execute the after CB synchronously. */
+		uv_log(1, "worker_handle_completed_work: prio, executing its done_cb myself\n");
+		if (w->work == uv__cancelled)
+			err = UV_ECANCELED;
+		else if (w->state_timed_out)
+			err = UV_ETIMEDOUT;
+		else
+			err = 0;
+
+		w->done(w, err);
+	}
+	else {
+		uv_log(1, "worker_handle_completed_work: Signaling loop that task %p is done.\n", w);
+		queue_completed_work(w);
+	}
 }
 
 
@@ -123,6 +158,13 @@ static void post(QUEUE* q) {
   uv_mutex_unlock(&mutex);
 }
 
+static void post_prio(QUEUE* q) {
+  uv_mutex_lock(&prio_mutex);
+  QUEUE_INSERT_TAIL(&prio_wq, q);
+  if (prio_idle_executors > 0)
+    uv_cond_signal(&prio_cond);
+  uv_mutex_unlock(&prio_mutex);
+}
 
 #ifndef _WIN32
 UV_DESTRUCTOR(static void cleanup(void)) {
@@ -131,25 +173,42 @@ UV_DESTRUCTOR(static void cleanup(void)) {
   if (initialized == 0)
     return;
 
+  /* Signal workers to wrap up. */
+	uv_log(1, "cleanup: posting exit messages\n");
   post(&exit_message);
+  post_prio(&prio_exit_message);
 
+  /* Spin until all of the executors have seen the exit message and finished what they were doing.
+	 * This ensures the executor cleanup is clean, see notes in hangman. */
+	uv_log(1, "cleanup: waiting for workers to see exit messages\n");
+	while (QUEUE_HEAD(&wq) != &exit_message);
+	while (QUEUE_HEAD(&prio_wq) != &prio_exit_message);
+
+	uv_log(1, "cleanup: cleaning up executors\n");
   for (i = 0; i < n_executors; i++)
     if (uv__executor_join(executors + i))
       abort();
 
   if (executors != default_executors)
     uv__free(executors);
+  executors = NULL;
+  n_executors = 0;
 
   uv_mutex_destroy(&mutex);
   uv_cond_destroy(&cond);
 
-  executors = NULL;
-  n_executors = 0;
+	uv_log(1, "cleanup: cleaning up prio_executor\n");
+	if (uv__executor_join(&prio_executor))
+		abort();
+
+	uv_mutex_destroy(&prio_mutex);
+	uv_cond_destroy(&prio_cond);
+
   initialized = 0;
 }
 #endif
 
-
+/* Call-once initialization routine. */
 static void init_executors(void) {
   unsigned int i;
   const char* val;
@@ -179,13 +238,23 @@ static void init_executors(void) {
   if (uv_mutex_init(&mutex))
     abort();
 
+  if (uv_cond_init(&prio_cond))
+    abort();
+
+  if (uv_mutex_init(&prio_mutex))
+    abort();
+
   QUEUE_INIT(&wq);
+  QUEUE_INIT(&prio_wq);
 
   for (i = 0; i < n_executors; i++) {
 		uv_log(1, "init_executors: Initializing executor %i: %p\n", i, executors + i);
-    if (uv__executor_init(executors + i))
+    if (uv__executor_init(executors + i, 0))
       abort();
 	}
+	uv_log(1, "init_executors: Initializing prio_executor\n");
+	if (uv__executor_init(&prio_executor, 1))
+		abort();
 
 	val = getenv("NODECURE_THREADPOOL_TIMEOUT_MS");
 	if (val != NULL)
@@ -216,6 +285,26 @@ static void init_once(void) {
   init_executors();
 }
 
+#define WORK_SUBMIT_INIT(loop, w, work, timed_out, done, killed)        \
+  do {                                                                  \
+  w->loop = loop;                                                       \
+  w->work = work;                                                       \
+	w->timed_out = timed_out;                                             \
+  w->done = done;                                                       \
+	w->killed = killed;                                                   \
+                                                                        \
+	w->prio = 0;                                                          \
+                                                                        \
+	w->state_queued = 0;                                                  \
+	w->state_assigned = 0;                                                \
+	w->state_timed_out = 0;                                               \
+	w->state_done = 0;                                                    \
+	w->state_canceled = 0;                                                \
+                                                                        \
+	w->state_queued = 1;                                                  \
+ }                                                                      \
+ while (0)
+
 /* Internal entrance into the threadpool.
  * Called from uv_queue_work with a uv_req_t, called from elsewhere (e.g. fs.c) and bypassing the uv_queue_work API. */
 void uv__work_submit(uv_loop_t* loop,
@@ -225,26 +314,35 @@ void uv__work_submit(uv_loop_t* loop,
                      void (*done)(struct uv__work* w, int status),
                      void (*killed)(void *dat)) { /* See uv_killed_cb. */
   uv_once(&once, init_once);
-  w->loop = loop;
-  w->work = work;
-	w->timed_out = timed_out;
-  w->done = done;
-	w->killed = killed;
-
-	w->state_queued = 0;
-	w->state_assigned = 0;
-	w->state_timed_out = 0;
-	w->state_done = 0;
-	w->state_canceled = 0;
-
-	w->state_queued = 1;
+	WORK_SUBMIT_INIT(loop, w, work, timed_out, done, killed);
 
   post(&w->wq);
+}
+
+void uv__work_submit_prio(uv_loop_t* loop,
+                     struct uv__work* w,
+                     void (*work)(struct uv__work* w),
+                     uint64_t (*timed_out)(struct uv__work *w, void **killed_dat), /* See uv_timed_out_cb. */
+                     void (*done)(struct uv__work* w, int status),
+                     void (*killed)(void *dat)) { /* See uv_killed_cb. */
+  uv_once(&once, init_once);
+	WORK_SUBMIT_INIT(loop, w, work, timed_out, done, killed);
+	w->prio = 1;
+
+  /* Make sure the caller uses this right. Can remove later. */
+	if (!QUEUE_EMPTY(&prio_wq))
+		abort();
+
+	post_prio(&w->wq);
 }
 
 
 static int uv__work_cancel(uv_loop_t* loop, uv_req_t* req, struct uv__work* w) {
   int cancelled;
+
+	/* Cannot cancel prio work. It's supposed to be handled immediately. */
+	if (w->prio)
+		return UV_EBUSY;
 
   uv_mutex_lock(&mutex);
   uv_mutex_lock(&w->loop->wq_mutex);
@@ -339,6 +437,20 @@ static uint64_t uv__queue_timed_out(struct uv__work* w, void **dat) {
 	return ret;
 }
 
+#define QUEUE_WORK_INIT(loop, req, work_cb, timed_out_cb, after_work_cb, killed_cb)    \
+  do {                                                                                 \
+		if (work_cb == NULL)                                                               \
+			return UV_EINVAL;                                                                \
+																																											 \
+		uv__req_init(loop, req, UV_WORK);                                                  \
+		req->loop = loop;                                                                  \
+		req->work_cb = work_cb;                                                            \
+		req->after_work_cb = after_work_cb;                                                \
+		req->timed_out_cb = timed_out_cb;                                                  \
+		req->killed_cb = killed_cb;                                                        \
+	}                                                                                    \
+	while (0)
+
 /* External entrance into threadpool.
  * We run req with the associated callbacks, using intermediate uv__queue_X callbacks to call them appropriately. */
 int uv_queue_work(uv_loop_t* loop,
@@ -347,18 +459,25 @@ int uv_queue_work(uv_loop_t* loop,
 									uv_timed_out_cb timed_out_cb,
                   uv_after_work_cb after_work_cb,
 									uv_killed_cb killed_cb) {
-  if (work_cb == NULL)
-    return UV_EINVAL;
+	QUEUE_WORK_INIT(loop, req, work_cb, timed_out_cb, after_work_cb, killed_cb);
 
-  uv__req_init(loop, req, UV_WORK);
-  req->loop = loop;
-  req->work_cb = work_cb;
-  req->after_work_cb = after_work_cb;
-	req->timed_out_cb = timed_out_cb;
-	req->killed_cb = killed_cb;
-	/* We set the intermediate killed_cb to the input value because we call it after calling uv_after_work_cb.
-	 * The req may have been de-allocated by then. */
+	/* Use the killed_cb directly. No intermediate because we call it after having called uv_after_work_cb and
+	 * have the arg from timed_out_cb already. The req may have been de-allocated by then. */
   uv__work_submit(loop, &req->work_req, uv__queue_work, uv__queue_timed_out, uv__queue_done, killed_cb);
+  return 0;
+}
+
+int uv_queue_work_prio(uv_loop_t* loop,
+                  uv_work_t* req,
+                  uv_work_cb work_cb,
+									uv_timed_out_cb timed_out_cb,
+                  uv_after_work_cb after_work_cb,
+									uv_killed_cb killed_cb) {
+	QUEUE_WORK_INIT(loop, req, work_cb, timed_out_cb, after_work_cb, killed_cb);
+
+	/* Use the killed_cb directly. No intermediate because we call it after having called uv_after_work_cb and
+	 * have the arg from timed_out_cb already. The req may have been de-allocated by then. */
+  uv__work_submit_prio(loop, &req->work_req, uv__queue_work, uv__queue_timed_out, uv__queue_done, killed_cb);
   return 0;
 }
 
@@ -394,13 +513,16 @@ int uv_cancel(uv_req_t* req) {
  * uv__executor_t
  ***************/
 
-int uv__executor_init (uv__executor_t *e) {
+int uv__executor_init (uv__executor_t *e, int prio) {
 	int rc;
-	uv_log(1, "uv__executor_init: Entry\n");
+	uv_log(1, "uv__executor_init: Entry: e %p prio %d\n", e, prio);
 
 	if (e == NULL) abort();
 
 	memset(e, 0, sizeof(*e));
+	e->id = -1;
+	e->prio = prio;
+	e->worker = NULL;
 
 	/* Create a manager. */
 	uv_log(1, "uv__executor_init: Creating manager\n");
@@ -462,7 +584,7 @@ int uv__executor_new_worker (uv__executor_t *e) {
 	e->manager.last_observed_work = NULL;
 
 	e->worker = worker;
-	rc = launch_worker(worker, channel);
+	rc = launch_worker(worker, channel, e->prio);
 	return rc;
 }
 
@@ -522,6 +644,8 @@ void manager (void *arg) {
 
 	uv_log(1, "manager: cleaning up my worker\n");
   executor = container_of(self, uv__executor_t, manager);
+	/* Caller has ensured that all of the pending work has finished or timed out by spinning on idle_executors.
+	 * So the worker is dead already. */
 	launch_hangman(executor->worker, NULL, NULL);
 
 	uv_log(1, "manager: closing my loop\n");
@@ -535,7 +659,6 @@ void manager (void *arg) {
 void uv__manager_async (uv_async_t *handle) {
 	uv__manager_t *self = NULL;
 	int rc;
-	uint64_t timeout_ms = 0;
   int valid_wakeup = 0;
 
 	if (handle == NULL) abort();
@@ -665,15 +788,16 @@ void uv__manager_timer (uv_timer_t *handle) {
  * uv__worker_t
  ***************/
 
-int launch_worker (uv__worker_t *worker_, uv__executor_channel_t *channel) {
+int launch_worker (uv__worker_t *worker_, uv__executor_channel_t *channel, int prio) {
 	int rc;
 
 	if (worker_ == NULL) abort();
 	if (channel == NULL) abort();
 
 	worker_->channel = channel;
+	worker_->prio = prio;
 	rc = uv_thread_create(&worker_->tid, worker, worker_);
-	uv_log(1, "launch_worker: launched %lu (rc %i)\n", worker_->tid, rc);
+	uv_log(1, "launch_worker: launched %lu (rc %i), prio %d\n", worker_->tid, rc, prio);
 	return rc;
 }
 
@@ -698,8 +822,29 @@ void worker (void *arg) {
 	int rc;
 	int old;
 
+  /* Same logic, different structures for prio and non-prio workers. */
+	QUEUE *wqP;
+	uv_mutex_t *mutexP;
+	uv_cond_t *condP;
+	unsigned int *n_idleP;
+
 	uv__worker_t *self = (uv__worker_t *) arg;
 	assert(self != NULL);
+
+	if (self->prio) {
+		uv_log(1, "worker: Hello from prio worker\n");
+		wqP = &prio_wq;
+		mutexP = &prio_mutex;
+		condP = &prio_cond;
+		n_idleP = &prio_idle_executors;
+	}
+	else {
+		uv_log(1, "worker: Hello from worker\n");
+		wqP = &wq;
+		mutexP = &mutex;
+		condP = &cond;
+		n_idleP = &idle_executors;
+	}
 
   /* A worker should be cancel'able at any time, not just when it reaches a cancellation point (i.e. a syscall).
 	 * This makes sure that a worker in an infinite loop can be cancelled. */
@@ -711,33 +856,40 @@ void worker (void *arg) {
 	mark_not_cancelable();
 
   for (;;) {
-    uv_mutex_lock(&mutex);
+		int is_exit = 0;
+    uv_mutex_lock(mutexP);
 
-    while (QUEUE_EMPTY(&wq)) {
+    while (QUEUE_EMPTY(wqP)) {
 			uv_log(1, "worker: Waiting for work\n");
-      idle_executors += 1;
-      uv_cond_wait(&cond, &mutex);
-      idle_executors -= 1;
+      *n_idleP += 1;
+      uv_cond_wait(condP, mutexP);
+      *n_idleP -= 1;
     }
 
-    q = QUEUE_HEAD(&wq);
+		/* Peek for exit message. */
+    q = QUEUE_HEAD(wqP);
 
-    if (q == &exit_message)
-      uv_cond_signal(&cond);
+    if (q == &exit_message || q == &prio_exit_message) {
+			is_exit = 1;
+      uv_cond_signal(condP); /* Tell the next guy. */
+		}
     else {
       QUEUE_REMOVE(q);
       QUEUE_INIT(q);  /* Signal uv_cancel() that the work req is
                              executing. */
     }
 
-    uv_mutex_unlock(&mutex);
+    uv_mutex_unlock(mutexP);
 
-    if (q == &exit_message)
+    if (is_exit)
       break;
 
 		/* We got work! */
     w = QUEUE_DATA(q, struct uv__work, wq);
 		uv_log(1, "worker: Got work %p\n", w);
+
+		if (w->prio ^ self->prio) /* Separate work, separate queues. */
+			abort();
     
 		uv_mutex_lock(&self->channel->mutex);
 			if (self->channel->timed_out) {
@@ -753,7 +905,6 @@ void worker (void *arg) {
 			self->channel->timed_out = 0;
 			uv_async_send(self->channel->async);
 		uv_mutex_unlock(&self->channel->mutex);
-
 
 		/* Do the work.
 		 * Thread is cancel'able here. */
@@ -786,8 +937,8 @@ void worker (void *arg) {
 		mark_not_cancelable();
 
 		/* Prepare for next task. */
-		uv_log(1, "worker: Signaling loop that task %p is done.\n", w);
-		queue_completed_work(w);
+		worker_handle_completed_work(w);
+		/* w is now unsafe because after_work_cb may have run and free'd it. */
   }
 
 	uv_log(1, "worker: Farewell\n");
@@ -847,10 +998,8 @@ void hangman (void *h) {
 		struct uv__work *w = self->victim->channel->curr_work;
 
 		if (w != NULL) {
-			/* Prepare for next task. */
-			uv_log(1, "hangman: Signaling loop that task %p is done.\n", w);
-			w->state_timed_out = 1;
-			queue_completed_work(w);
+			/* Work is completed with a timeout. The worker won't be filing it so we must. */
+			worker_handle_completed_work(w);
 		}
 
     /* Signal launch_hangman that it can return, making w invalid. */
@@ -860,7 +1009,9 @@ void hangman (void *h) {
 		self->victim->channel->curr_work = NULL; /* Avoid temptation. */
 
 		/* Cancel the victim.
-     * It might already have finished its task, seen channel->timed_out, and returned, so ignore the uv_thread_cancel rc. */
+     * Ignore the rc. It might already have finished its task, seen channel->timed_out, and returned,
+		 *                or this might be the final cleanup and it has already returned.
+		 * During cleanup, the worker has already seen the final message due to the while() loops after posting the exit_message's. */
 		uv_log(1, "hangman: Cancel'ing victim %lld\n", self->victim->tid);
 		uv_thread_cancel(&self->victim->tid);
 

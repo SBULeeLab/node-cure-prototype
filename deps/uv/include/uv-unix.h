@@ -172,6 +172,9 @@ struct uv__fs_buf_s {
   /* uv_fs_stat, uv_fs_fstat */
 	uv_stat_t *statbuf;
 
+  /* sync2async uses this. Post in uv__fs_done_sync. */
+	uv_sem_t done;
+
   /* Cleaned up in the later of {uv_fs_req_cleanup, uv__fs_killed}. */
   uv_mutex_t mutex;
 	int refcount;
