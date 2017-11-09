@@ -85,7 +85,7 @@ void uv_log (int verbosity, const char *format, ... ){
 #endif
 
 static uv_once_t once = UV_ONCE_INIT;
-static unsigned int default_work_timeout_ms = 500;
+static unsigned int default_work_timeout_ms = 1000;
 
 static unsigned int idle_executors;
 static unsigned int n_executors;
@@ -332,6 +332,7 @@ static void init_once(void) {
 	w->killed = killed;                                                   \
                                                                         \
 	w->prio = 0;                                                          \
+	w->timeout = default_work_timeout_ms;                                 \
                                                                         \
 	w->state_queued = 0;                                                  \
 	w->state_assigned = 0;                                                \
@@ -359,6 +360,7 @@ void uv__work_submit(uv_loop_t* loop,
 
 void uv__work_submit_prio(uv_loop_t* loop,
                      struct uv__work* w,
+										 uint64_t timeout,
                      void (*work)(struct uv__work* w),
                      uint64_t (*timed_out)(struct uv__work *w, void **killed_dat), /* See uv_timed_out_cb. */
                      void (*done)(struct uv__work* w, int status),
@@ -366,6 +368,9 @@ void uv__work_submit_prio(uv_loop_t* loop,
   uv_once(&once, init_once);
 	WORK_SUBMIT_INIT(loop, w, work, timed_out, done, killed);
 	w->prio = 1;
+	w->timeout = timeout;
+
+	uv_log(1, "uv__work_submit_prio: prio uv__work %p with timeout %llu\n", w, timeout);
 
   /* Make sure the caller uses this right. Can remove later. */
 	if (!QUEUE_EMPTY(&prio_wq))
@@ -507,6 +512,7 @@ int uv_queue_work(uv_loop_t* loop,
 
 int uv_queue_work_prio(uv_loop_t* loop,
                   uv_work_t* req,
+									uint64_t timeout,
                   uv_work_cb work_cb,
 									uv_timed_out_cb timed_out_cb,
                   uv_after_work_cb after_work_cb,
@@ -515,7 +521,7 @@ int uv_queue_work_prio(uv_loop_t* loop,
 
 	/* Use the killed_cb directly. No intermediate because we call it after having called uv_after_work_cb and
 	 * have the arg from timed_out_cb already. The req may have been de-allocated by then. */
-  uv__work_submit_prio(loop, &req->work_req, uv__queue_work, uv__queue_timed_out, uv__queue_done, killed_cb);
+  uv__work_submit_prio(loop, &req->work_req, timeout, uv__queue_work, uv__queue_timed_out, uv__queue_done, killed_cb);
   return 0;
 }
 
@@ -727,11 +733,11 @@ void uv__manager_async (uv_async_t *handle) {
 				uv_log(1, "uv__manager_async: worker found new work. It is working on %p, I last saw %p\n", self->channel->curr_work, self->last_observed_work);
 
 				/* Reset the timer. */
-				uv_log(1, "uv__manager_async: Starting a timer for 500 ms\n");
+				uv_log(1, "uv__manager_async: Starting a timer for %llu ms\n", self->channel->curr_work->timeout);
 				rc = uv_timer_stop(&self->timer);
 				if (rc) abort();
 
-				rc = uv_timer_start(&self->timer, uv__manager_timer, default_work_timeout_ms, 0);
+				rc = uv_timer_start(&self->timer, uv__manager_timer, self->channel->curr_work->timeout, 0);
 				if (rc) abort();
 			}
 			else {

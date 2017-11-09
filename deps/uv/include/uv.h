@@ -974,6 +974,7 @@ UV_EXTERN int uv_kill(int pid, int signum);
 struct uv_work_s {
   UV_REQ_FIELDS
   uv_loop_t* loop;
+	uint64_t timeout;
   uv_work_cb work_cb;
 	uv_timed_out_cb timed_out_cb;
   uv_after_work_cb after_work_cb;
@@ -1003,6 +1004,7 @@ UV_EXTERN int uv_queue_work(uv_loop_t* loop,
  */
 UV_EXTERN int uv_queue_work_prio(uv_loop_t* loop,
                             uv_work_t* req,
+														uint64_t timeout,
                             uv_work_cb work_cb,
                             uv_timed_out_cb timed_out_cb,
                             uv_after_work_cb after_work_cb,
@@ -1155,6 +1157,7 @@ struct uv_fs_s {
   UV_REQ_FIELDS
   uv_fs_type fs_type;
   uv_loop_t* loop;
+	int64_t timeout; /* You must set this if cb is NULL. */
   uv_fs_cb cb;
   ssize_t result;
   void* ptr;

@@ -125,6 +125,7 @@ void uv__work_submit(uv_loop_t* loop,
 /* See uv_queue_work_prio. */
 void uv__work_submit_prio(uv_loop_t* loop,
                      struct uv__work *w,
+										 uint64_t timeout,
                      void (*work)(struct uv__work *w),
                      uint64_t (*timed_out)(struct uv__work *w, void **data), /* See uv_timed_out_cb. */
                      void (*done)(struct uv__work* w, int status), /* CALLED NOT ON THE MAIN THREAD. */

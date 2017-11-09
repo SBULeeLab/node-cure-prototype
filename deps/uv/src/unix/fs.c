@@ -999,7 +999,7 @@ static void sync_timeout_buf (uv_fs_t *req, int success) {
 #define POST                                                                  \
   do {                                                                        \
     if (cb == NULL) {                                                         \
-      uv__work_submit_prio(loop, &req->work_req, uv__fs_work, uv__fs_timed_out, uv__fs_done_sync, uv__fs_killed);        \
+      uv__work_submit_prio(loop, &req->work_req, req->timeout, uv__fs_work, uv__fs_timed_out, uv__fs_done_sync, uv__fs_killed);        \
 			uv_sem_wait(&req->timeout_buf->done);                                   \
       return req->result;                                                     \
     }                                                                         \

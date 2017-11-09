@@ -36,6 +36,7 @@ struct uv__work {
   void* wq[2]; /* QUEUE_EMPTY(&wq) when work() is active. */
 
 	int prio; /* uv__work_submit_prio */
+	uint64_t timeout; /* Use this timeout. We use the same default value for all non-prio work. */
 
 	/* FOR DEBUGGING.
 	 * Managed by the default uv__queue_X APIs for callers of uv_queue_work. */
