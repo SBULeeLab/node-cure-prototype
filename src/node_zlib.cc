@@ -76,7 +76,6 @@ class ZCtx : public AsyncWrap {
   typedef struct ZCtx_semas_s {
 		uv_sem_t process; /* For After and After_sync2async. */
 		uv_sem_t sync2async; /* For Write and After_sync2async. */
-		int timed_out; /* Can't trust err_ after a timeout. */
 	} ZCtx_semas_t;
 
   ZCtx(Environment* env, Local<Object> wrap, node_zlib_mode mode)
@@ -229,6 +228,8 @@ class ZCtx : public AsyncWrap {
 			uv_sem_destroy(&semas->process);
 			uv_sem_destroy(&semas->sync2async);
 			delete semas;
+			semas = NULL;
+			work_req->data = NULL;
 
 			dprintf(2, "ZCtx::Write: Wrapping up\n");
       if (CheckError(ctx))
@@ -447,7 +448,6 @@ class ZCtx : public AsyncWrap {
 			dprintf(2, "ZCtx::After: ETIMEDOUT, waiting for Process() to die (semas %p)\n", semas);
 			uv_sem_wait(&semas->process);
 			// Now on timeout, the Process thread has been killed, so our memory is safe.
-			semas->timed_out = 1;
 			ctx->err_ = ETIMEDOUT;
 		}
 		else
@@ -458,6 +458,7 @@ class ZCtx : public AsyncWrap {
 		uv_sem_destroy(&semas->sync2async);
 		delete semas;
 		semas = NULL;
+		work_req->data = NULL;
 
     Environment* env = ctx->env();
 
@@ -496,7 +497,6 @@ class ZCtx : public AsyncWrap {
 			dprintf(2, "ZCtx::After_sync2async: ETIMEDOUT, waiting for Process() to die (semas %p)\n", semas);
 			uv_sem_wait(&semas->process);
 			// Now on timeout, the Process thread has been killed, so our memory is safe.
-			semas->timed_out = 1;
 			ctx->err_ = ETIMEDOUT;
 		}
 		else
