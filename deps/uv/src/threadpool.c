@@ -126,8 +126,36 @@ static void queue_completed_work (struct uv__work *w) {
 	uv_mutex_unlock(&w->loop->wq_mutex);
 }
 
+/* Get it? worker? doner? hahaha. */
+typedef struct doner_arg_s {
+	struct uv__work *w;
+	int err;
+} doner_arg_t;
+
+/* Run the done() CB in arg->w.
+ * Release the memory when done. */
+static void doner (void *arg) {
+	doner_arg_t *doner_arg;
+	uv_thread_t self;
+
+	self = uv_thread_self();
+
+	if (uv_thread_detach(&self))
+		abort();
+
+	if (arg == NULL)
+		abort();
+	doner_arg = (doner_arg_t *) arg;
+
+	doner_arg->w->done(doner_arg->w, doner_arg->err);
+	uv__free(doner_arg);
+}
+
 /* For a worker on completed work, or a hangman in its victim's stead. */
 static void worker_handle_completed_work (struct uv__work *w) {
+	int rc;
+	doner_arg_t *doner_arg;
+	uv_thread_t doner_tid;
 	if (w == NULL) abort();
 
 	if (w->prio) {
@@ -141,7 +169,17 @@ static void worker_handle_completed_work (struct uv__work *w) {
 		else
 			err = 0;
 
-		w->done(w, err);
+    /* Run from a helper thread in case it timed out and there are interactions between done() and killed().
+		 * Both of these are the hangman's responsibility and they may synchronize, e.g. for the sync2async implementations in Node-C++-land.
+		 * Since the user of the prio interface must use it synchronously, he may be synchronizing done() with killed(). */
+		doner_arg = (doner_arg_t *) uv__malloc(sizeof(*doner_arg)); /* Memory free'd by doner. */
+		if (doner_arg == NULL)
+			abort();
+		doner_arg->w = w;
+		doner_arg->err = err;
+		rc = uv_thread_create(&doner_tid, doner, doner_arg);
+		if (rc)
+			abort();
 	}
 	else {
 		uv_log(1, "worker_handle_completed_work: Signaling loop that task %p is done.\n", w);
@@ -998,7 +1036,11 @@ void hangman (void *h) {
 		struct uv__work *w = self->victim->channel->curr_work;
 
 		if (w != NULL) {
-			/* Work is completed with a timeout. The worker won't be filing it so we must. */
+			/* Work is completed with a timeout. The worker won't be filing it so we must.
+			 * If w->prio, this is non-blocking, creating a helper thread to run done().
+			 * That way we can proceed to cancel'ing the thread and calling killed_cb.
+			 * This permits done() to synchronize with killed_cb, which may be necessary 
+			 * for black-box libraries like in Node-C++ land. */
 			worker_handle_completed_work(w);
 		}
 
