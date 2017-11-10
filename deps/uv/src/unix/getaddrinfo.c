@@ -36,6 +36,17 @@
 /* EAI_* constants. */
 #include <netdb.h>
 
+static void mark_not_cancelable (void) {
+	int old;
+	int rc = uv_thread_setcancelstate(UV_CANCEL_DISABLE, &old);
+	if (rc) abort();
+}
+
+static void mark_cancelable (void) {
+	int old;
+	int rc = uv_thread_setcancelstate(UV_CANCEL_ENABLE, &old);
+	if (rc) abort();
+}
 
 int uv__getaddrinfo_translate_error(int sys_err) {
   switch (sys_err) {
@@ -99,7 +110,10 @@ static void uv__getaddrinfo_work(struct uv__work* w) {
   int err;
 
   req = container_of(w, uv_getaddrinfo_t, work_req);
+  /* getaddrinfo is not AC-safe: AC-Unsafe lock corrupt mem fd. */
+	mark_not_cancelable();
   err = getaddrinfo(req->buf->hostname, req->buf->service, &req->buf->hints, &req->buf->addrinfo);
+	mark_cancelable();
   req->retcode = uv__getaddrinfo_translate_error(err);
 }
 

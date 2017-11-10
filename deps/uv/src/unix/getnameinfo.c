@@ -27,6 +27,18 @@
 #include "uv.h"
 #include "internal.h"
 
+static void mark_not_cancelable (void) {
+	int old;
+	int rc = uv_thread_setcancelstate(UV_CANCEL_DISABLE, &old);
+	if (rc) abort();
+}
+
+static void mark_cancelable (void) {
+	int old;
+	int rc = uv_thread_setcancelstate(UV_CANCEL_ENABLE, &old);
+	if (rc) abort();
+}
+
 
 static void uv__getnameinfo_work(struct uv__work* w) {
   uv_getnameinfo_t* req;
@@ -42,6 +54,8 @@ static void uv__getnameinfo_work(struct uv__work* w) {
   else
     abort();
 
+  /* getnameinfo is not AC-safe: AC-Unsafe lock corrupt mem fd. */
+	mark_not_cancelable();
   err = getnameinfo((struct sockaddr*) &req->buf->storage,
                     salen,
                     req->buf->host,
@@ -49,6 +63,7 @@ static void uv__getnameinfo_work(struct uv__work* w) {
                     req->buf->service,
                     sizeof(req->buf->service),
                     req->flags);
+	mark_cancelable();
   req->retcode = uv__getaddrinfo_translate_error(err);
 }
 
