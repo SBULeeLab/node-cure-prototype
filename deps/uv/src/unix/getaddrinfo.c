@@ -118,6 +118,13 @@ static uint64_t uv__getaddrinfo_timed_out (struct uv__work* w, void **dat) {
 	 * so we have to free the memory once it is killed. */
 	*dat = req->buf;
 
+	/* Resource management policy:
+	 *   TODO We don't do anything here.
+	 *   Recommendation:
+	 *     A DNS timeout is probably due to a flaky network.
+	 *     The failure is likely not permanent. 
+	 *     Thus a temporal blacklist seems appropriate: time out requests to the same resource for the next X minutes. */
+
   /* Tell threadpool to abort the Task. */
 	return 0;
 }
