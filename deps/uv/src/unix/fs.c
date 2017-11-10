@@ -2085,9 +2085,16 @@ static uint64_t uv__fs_timed_out(struct uv__work* w, void **dat) {
 	/* Propagate to uv__fs_done. */
 	req->result = -ETIMEDOUT;
 
-	/* Resource management policy: conservatively mark all resources involved as dangerous. */
-  dprintf(2, "uv__fs_timed_out: marking req %p's resources slow\n", req);
-	mark_resources_slow(req);
+	/* Resource management policy:
+	 *   If an asynchronous request, it used the full timeout. Mark its resources dangerous.
+	 *   If a synchronous request, its timeout may have been dictated by a short remaining timeout from TimeoutWatchdog->Leash.
+	 *   TODO Check how long req->timeout was -- if above, some threshold we could still call it slow. */
+	if (req->cb != NULL) {
+		dprintf(2, "uv__fs_timed_out: Asynchronous req %p timed out, marking its resources slow\n", req);
+		mark_resources_slow(req);
+	}
+	else
+		dprintf(2, "uv__fs_timed_out: Synchronous req %p timed out, had a timeout of %lu, not marking it slow\n", req, req->timeout);
 
   /* Share timeout_buf with uv__fs_killed for cleanup in the later of uv_fs_req_cleanup, uv__fs_killed. */
 	dprintf(2, "uv__fs_timed_out: Adding ref to buf %p\n", req->timeout_buf);
