@@ -60,6 +60,9 @@ struct sockaddr;
 
 namespace node {
 
+class TimeoutWatchdog;
+extern TimeoutWatchdog *timeout_watchdog; // Set in node.cc
+
 // Set in node.cc by ParseArgs with the value of --openssl-config.
 // Used in node_crypto.cc when initializing OpenSSL.
 extern std::string openssl_config;

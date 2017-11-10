@@ -22,6 +22,7 @@
 #include "node_buffer.h"
 #include "node_internals.h"
 #include "node_stat_watcher.h"
+#include "node_watchdog.h"
 
 #include "req-wrap.h"
 #include "req-wrap-inl.h"
@@ -402,13 +403,17 @@ class fs_req_wrap {
 #define SYNC_DEST_CALL(func, path, dest, ...)                                 \
   fs_req_wrap req_wrap;                                                       \
   env->PrintSyncTrace();                                                      \
+	uint64_t remaining_ms = timeout_watchdog->Leash();                          \
+	req_wrap.req.timeout = remaining_ms;                                        \
   int err = uv_fs_ ## func(env->event_loop(),                                 \
                          &req_wrap.req,                                       \
                          __VA_ARGS__,                                         \
                          nullptr);                                            \
   if (err < 0) {                                                              \
+		timeout_watchdog->Unleash(err == -ETIMEDOUT);                             \
     return env->ThrowUVException(err, #func, nullptr, path, dest);            \
   }                                                                           \
+	timeout_watchdog->Unleash(false);                                           \
 
 #define SYNC_CALL(func, path, ...)                                            \
   SYNC_DEST_CALL(func, path, nullptr, __VA_ARGS__)                            \

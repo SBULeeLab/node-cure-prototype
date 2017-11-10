@@ -85,11 +85,11 @@ class Watchdog {
 
 /**
  * State diagram:                   
- *                                DisableCountdown called from an async-hook
+ *                                AfterHook called from an async-hook
  *                               -------------------
  *      Executing startup JS     |                 |     Timer expires. Call Isolate::Timeout
  *  init --------------------> idle --------> countdown ------------>  Timeout 
- *                                StartCountdown       \                |
+ *                                BeforeHook       \                |
  *                            called from an async-hook ----------------|
  *                                                         Self-reset to continue aborting.
  *                                                         Ultimately, we can't protect a script that keeps ignoring
@@ -107,33 +107,33 @@ class TimeoutWatchdog { // TimeoutWatchdog (TW). Timeouts in ms granularity.
 		/* Event loop APIs. */
 
 		/**
-		 * Event Loop thread tells TW to start a countdown.
+		 * Event Loop thread starts a new async operation.
 		 * Call this from an async-hook and provide the async_id.
-		 * This is nesting-safe. Call from every "before" hook.
+		 * Call from every "before" hook.
 		 */
-	  void StartCountdown (long async_id);
+	  void BeforeHook (long async_id);
 
 		/**
-		 * Event Loop thread tells TW to disable the countdown for this async_id.
-		 * This is nesting-safe. Call from every "after" hook.
+		 * Event Loop thread tells TW that the async operation for this async_id has completed.
+		 * Should be LIFO with BeforeHook.
+		 * Call from every "after" hook.
 		 */
-		void DisableCountdown (long async_id);
+		void AfterHook (long async_id);
 
-#if 0
 		/**
-		 * If there is an active countdown, report how long it was for.
-		 * Otherwise returns -1.
+     * JS code calls into a C++ binding that's TW-aware.
+		 * The C++ binding tells TW that it will manage the timer for now.
+		 *
+		 * Returns time left on the countdown.
+		 * Until Unleash is called, no timeout will be thrown by this TW.
 		 */
-		long GetCountdownTimeout ();
+		uint64_t Leash (void);
 
-		/* If there is an active countdown, report the time remaining.
-		 * Otherwise returns -1.
+    /**
+		 * The C++ binding has returned. if(threw), it threw a timeout exception.
+		 * TW resumes the countdown as appropriate.
 		 */
-		long GetCountdownRemaining ();
-#endif
-
-		/* Returns true if there is an active countdown and it has expired. */
-		bool HasTimerExpired ();
+		void Unleash (bool threw);
 
 		/* TW thread APIs. */
 
@@ -145,22 +145,17 @@ class TimeoutWatchdog { // TimeoutWatchdog (TW). Timeouts in ms granularity.
 		static void Run (void *arg);
 
 	private:
-		/* Helpers for Event Loop APIs. */
-		// XXX
-
 		/* Helpers for TW thread. */
 
 		/**
-		 * A new call stack has begun!
-		 *  - Start a timer.
-		 *  - Mark TW active.
+		 * Start a timer expiring in expiry_ms.
 		 */
-		void _StartTimer();
+		void _StartTimer(uint64_t expiry_ms);
 
 		/* Entrance points for TW thread. */
 
 		/**
-		 * The queue was updated by AddAsyncId.
+		 * Communication from the outside world.
 		 */
 		static void Async(uv_async_t* async);
 
@@ -171,22 +166,38 @@ class TimeoutWatchdog { // TimeoutWatchdog (TW). Timeouts in ms granularity.
 
 		/* Class members. */
 
-		long timeout_ms_; // How long each StartCountdown has before we time it out.
+		/* Constants. */
+		long timeout_ms_; // How long each BeforeHook has before we time it out.
 		v8::Isolate *isolate_; // The associated isolate.
 		uv_thread_t thread_; // The TW thread.
 
-		uv_loop_t *loop_; // TW thread uses a uv_loop_t to manage an async (for async-hook communication) and a timer (for timeouts).
-		uv_async_t async_; // uv_async_send when the async_ids stack is newly empty or newly non-empty.
-		uv_timer_t timer_; // If it goes off, trigger a timeout.
+		/* Managing the TW thread. */
+		uv_loop_t *loop_;  // TW thread uses a uv_loop_t to manage an async (for async-hook communication) and a timer (for timeouts).
+		uv_async_t async_; // uv_async_send when: (1) the async_ids stack is newly empty or newly non-empty, (2) leash change, (3) stopping.
+		uv_timer_t timer_; // If it goes off, trigger a timeout if the state is the same as when we started the timer.
 
+		/* Mutable fields. The TW thread and the Event Loop thread communicate through these since TW thread responds asynchronously. */
 	  uv_mutex_t lock_; // Protects all this stuff.
+
+		/* BeforeHook, AfterHook */
 		std::stack<long> pending_async_ids_; // Nested async hooks are called in a stack.
-		bool active_; // True if there was an active call stack the last time we went through Async().
-		bool timed_out_; // True if we timed out on this call stack.
+		long stack_num_; // Number of stacks we have seen -- when stack goes from empty to non-empty, +1.
+		uint64_t time_at_stack_change_ms_;
+
+		/* Leash, Unleash. */
+		bool leashed_; // True if we shouldn't throw timeouts.
+		uint64_t time_at_leash_ms_;
+		long stack_num_at_leash_;
+		long stack_num_at_unleash_;
+		bool threw_while_leashed_;
+
+		/* _StartTimer. */
+		uint64_t timer_start_time_ms_; // Taken before we start the timer. So the next timer will expire no earlier than (timer_start_time + timeout_ms).
+		long stack_num_at_timer_start_;
+
+		/* ~TimeoutWatchdog. */
 		bool stopping_; // Signal TW to clean up.
 		uv_sem_t stopped_; // TW posts when it receives the final Async
-
-		uint64_t time_of_last_timeout_ns_;
 };
 
 class SigintWatchdog {

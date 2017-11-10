@@ -104,17 +104,11 @@ void Watchdog::Timer(uv_timer_t* timer) {
 }
 
 TimeoutWatchdog::TimeoutWatchdog(v8::Isolate* isolate, long timeout_ms)
-    : isolate_(isolate), timeout_ms_(timeout_ms), active_(false), stopping_(false), time_of_last_timeout_ns_(0) {
+    : isolate_(isolate), timeout_ms_(timeout_ms), stopping_(false) {
 
   int rc;
 
-	CHECK(pending_async_ids_.empty()); // Call me paranoid...
-
-	rc = uv_mutex_init(&lock_);
-	CHECK(rc == 0);
-
-	rc = uv_sem_init(&stopped_, 0);
-	CHECK(rc == 0);
+	/* Initialize all the fields. */
 
   loop_ = new uv_loop_t;
   CHECK(loop_);
@@ -130,6 +124,28 @@ TimeoutWatchdog::TimeoutWatchdog(v8::Isolate* isolate, long timeout_ms)
   rc = uv_timer_init(loop_, &timer_);
   CHECK_EQ(0, rc);
 
+	rc = uv_mutex_init(&lock_);
+	CHECK(rc == 0);
+
+	CHECK(pending_async_ids_.empty());
+	stack_num_ = 0;
+	time_at_stack_change_ms_ = 0;
+
+	leashed_ = false;
+	time_at_leash_ms_ = 0;
+	stack_num_at_leash_ = -1;
+	stack_num_at_unleash_ = -1;
+	threw_while_leashed_ = false;
+
+	timer_start_time_ms_ = 0;
+	stack_num_at_timer_start_ = -1;
+
+	stopping_ = false;
+
+	rc = uv_sem_init(&stopped_, 0);
+	CHECK(rc == 0);
+
+	/* Lastly, start the inhabiting TW thread. */
   rc = uv_thread_create(&thread_, &TimeoutWatchdog::Run, this);
   CHECK_EQ(0, rc);
 }
@@ -171,36 +187,100 @@ TimeoutWatchdog::~TimeoutWatchdog() {
 	uv_mutex_destroy(&lock_);
 }
 
-void TimeoutWatchdog::StartCountdown(long async_id) {
+void TimeoutWatchdog::BeforeHook(long async_id) {
 	uv_mutex_lock(&lock_);
 	CHECK(!stopping_);
 
 	bool was_empty = pending_async_ids_.empty();
 	pending_async_ids_.push(async_id);
 
-	// Signal wd thread: change in state.
-  if (was_empty)
-		uv_async_send(&async_);
+	/* TODO What to do about TIMERWRAP vs. individual timers? This scheme bills the cumulative time to the framework-level wrapper.
+	 *      Probably same issue with an EventEmitter? */
+  if (was_empty) {
+		stack_num_++;
+		time_at_stack_change_ms_ = uv_hrtime() / 1000000;
+		dprintf(2, "TimeoutWatchdog::BeforeHook: was_empty, now stack_num_ %ld\n", stack_num_);
+		uv_async_send(&async_); // Signal wd thread: change in state.
+	}
 
-	dprintf(2, "TimeoutWatchdog::StartCountdown: was_empty %d\n", was_empty);
 	uv_mutex_unlock(&lock_);
 
 	return;
 }
 
-void TimeoutWatchdog::DisableCountdown(long async_id) {
+void TimeoutWatchdog::AfterHook(long async_id) {
 	uv_mutex_lock(&lock_);
-	CHECK(!stopping_);
 
+	CHECK(!stopping_);
+	CHECK(!leashed_);
 	CHECK(!pending_async_ids_.empty());
+
+	/* Pop ID, see if state changed. */
 	pending_async_ids_.pop();
 	bool now_empty = pending_async_ids_.empty();
 
 	// Signal wd thread: change in state.
-	if (now_empty)
+	if (now_empty) {
+		dprintf(2, "TimeoutWatchdog::AfterHook: now_empty\n");
 		uv_async_send(&async_);
+	}
 
-	dprintf(2, "TimeoutWatchdog::DisableCountdown: now_empty %d\n", now_empty);
+	uv_mutex_unlock(&lock_);
+
+	return;
+}
+
+uint64_t TimeoutWatchdog::Leash (void) {
+	dprintf(2, "TimeoutWatchdog::Leash: entry\n");
+
+	uv_mutex_lock(&lock_);
+
+	CHECK_EQ(leashed_, false);
+	leashed_ = true;
+
+	if (pending_async_ids_.empty()) {
+		dprintf(2, "TimeoutWatchdog::Leash: startup code, not in an async region\n");
+		uv_mutex_unlock(&lock_);
+		return timeout_ms_;
+	}
+
+	time_at_leash_ms_ = uv_hrtime() / 1000000;
+	stack_num_at_leash_ = stack_num_;
+	dprintf(2, "TimeoutWatchdog::Leash: stack_num_at_leash_ %ld\n", stack_num_);
+	uv_async_send(&async_); // Signal leash change.
+
+	uv_mutex_unlock(&lock_);
+
+  /* Figure out how long the timer had left. */
+	uint64_t since_start_ms = time_at_leash_ms_ - timer_start_time_ms_;
+	uint64_t remaining_ms = (timeout_ms_ < since_start_ms) ? 0 : timeout_ms_ - since_start_ms;
+
+	dprintf(2, "TimeoutWatchdog::Leash: Leashed with %lu remaining\n", remaining_ms);
+	return remaining_ms;
+}
+
+void TimeoutWatchdog::Unleash (bool threw) {
+	dprintf(2, "TimeoutWatchdog::Unleash: entry\n");
+
+	uv_mutex_lock(&lock_);
+
+	CHECK_EQ(leashed_, true);
+	leashed_ = false;
+
+	if (pending_async_ids_.empty()) {
+		dprintf(2, "TimeoutWatchdog::Unleash: startup code, not in an async region\n");
+		uv_mutex_unlock(&lock_);
+		return;
+	}
+
+	threw_while_leashed_ = threw;
+	stack_num_at_unleash_ = stack_num_;
+
+	CHECK(stack_num_at_leash_ == stack_num_at_unleash_);
+
+	dprintf(2, "TimeoutWatchdog::Unleash: threw_while_leashed %d stack_num_at_leash_ %ld\n", threw, stack_num_);
+	uv_async_send(&async_); /* Signal leash change. */
+
 	uv_mutex_unlock(&lock_);
 
 	return;
@@ -215,17 +295,23 @@ void TimeoutWatchdog::Run(void* arg) {
 }
 
 /**
- * At some point, a StartCountdown found the stack empty or a DisableCountdown emptied the stack.
- * Since uv_async_send can be coalesced, we can't assume anything about the state of the stack now.
+ * At some point, someone uv_async_send'd.
+ *  BeforeHook, AfterHook, Leash, Unleash, wrapping up, or any sequence.
+ * Since uv_async_send can be coalesced, we can't assume anything about the state now.
+ * Must reason from our state variables.
  */
 void TimeoutWatchdog::Async(uv_async_t* async) {
   TimeoutWatchdog *w = ContainerOf(&TimeoutWatchdog::async_, async);
 
   dprintf(2, "TimeoutWatchdog::Async: entry\n");
 	uv_mutex_lock(&w->lock_);
+
 	bool any_async_ids = !w->pending_async_ids_.empty();
 	int rc;
+	uint64_t since_ms;
+	uint64_t remaining_ms;
 
+	// 1. If we're stopping, bail.
 	if (w->stopping_) {
 		dprintf(2, "TimeoutWatchdog::Async: stopping_, calling uv_stop\n");
 		uv_stop(w->loop_);
@@ -233,99 +319,143 @@ void TimeoutWatchdog::Async(uv_async_t* async) {
 		goto UNLOCK_AND_RETURN;
 	}
 
-	if (w->active_) {
-		dprintf(2, "TimeoutWatchdog::Async: I was active\n");
-		// If we were active and someone uv_async_send'd us:
-		//   - the stack emptied at some point.
-		//   - therefore the current timer should be stopped.
+	// 2. If we're leashed, clear the current timer. Unleash is checked below.
+	if (w->leashed_) {
+		dprintf(2, "TimeoutWatchdog::Async: leashed, clearing the timer\n");
 		rc = uv_timer_stop(&w->timer_);
-		CHECK_EQ(rc, 0);
+		CHECK(rc == 0);
+		goto UNLOCK_AND_RETURN;
+	}
 
-		if (any_async_ids) {
-			// If the stack is occupied, the 'empty' async send was coalesced with a 'not empty' send.
-			// We should start a timer.
-			dprintf(2, "TimeoutWatchdog::Async: Stack is occupied, starting the timer\n");
-			w->_StartTimer();
-		}
-		else {
-			dprintf(2, "TimeoutWatchdog::Async: Stack is empty, nothing to do\n");
-			w->active_ = false;
-			w->timed_out_ = false; // When the stack is clear, the timeout has been resolved.
-		}
+	// 3. If there's no stack, nothing to do.
+	if (!any_async_ids) {
+		dprintf(2, "TimeoutWatchdog::Async: no stack\n");
+		rc = uv_timer_stop(&w->timer_);
+		CHECK(rc == 0);
+		goto UNLOCK_AND_RETURN;
+	}
+
+	// We are neither stopping nor leashed.
+	// Since we are here, there must have been at least one stack change or at least one Unleash.
+	// It may be that there was a stack change and we should start a timer.
+	// It may be that a Leash-Unleash wiped our timer and we should pick up where we left off.
+	// We can't just restart a timer from timeout_ms_ because of something like this:
+	//   `while(1) { fs.readFileSync('/tmp/x'); }`.
+	// We have to account for the time used up in the Leashed region.
+
+	// 4. If the stack has changed since we last started a timer, our current timer is invalid and we should start anew.
+	if (w->stack_num_ != w->stack_num_at_timer_start_) {
+		dprintf(2, "TimeoutWatchdog::Async: stack has changed, starting a timer\n");
+		w->_StartTimer(w->timeout_ms_);
+		goto UNLOCK_AND_RETURN;
+	}
+
+	// 5. It is the same stack for which we last started a timer. That means there was an Unleash.
+	CHECK(w->stack_num_ == w->stack_num_at_unleash_);
+	if (w->threw_while_leashed_) {
+		dprintf(2, "TimeoutWatchdog::Async: There was an Unleash, but we threw while leashed. Starting a fresh timer\n");
+		w->_StartTimer(w->timeout_ms_);
+		goto UNLOCK_AND_RETURN;
 	}
 	else {
-			dprintf(2, "TimeoutWatchdog::Async: I was not active\n");
-		// If we were not active and someone uv_async_send'd us:
-		//   - the stack was not empty at some point.
-		//   - therefore it may still not be empty
-		if (any_async_ids) {
-			w->_StartTimer();
+		dprintf(2, "TimeoutWatchdog::Async: There was an Unleash, but it did not throw. Resuming a timer\n");
+		since_ms = (uv_hrtime() / 1000000) - w->timer_start_time_ms_;
+		if (w->timeout_ms_ < since_ms) {
+			dprintf(2, "TimeoutWatchdog::Async: We should timeout now!\n");
+			// TIMEOUT
+			w->isolate()->Timeout(); // TODO Is it safe to call Timeout if the previous Timeout interrupt has been handled but the Timeout it threw hasn't cleared yet? Need to modify V8-land? Will this ever happen with a "reasonable" timeout_ms_?
+			remaining_ms = w->timeout_ms_; // Guard timeout handler.
 		}
-		else
-			w->timed_out_ = false; // No timeout pending.
+		else {
+			remaining_ms = w->timeout_ms_ - since_ms;
+			dprintf(2, "TimeoutWatchdog::Async: We still have %llu ms\n", remaining_ms);
+		}
+		w->_StartTimer(remaining_ms);
+		goto UNLOCK_AND_RETURN;
 	}
 
+	dprintf(2, "TimeoutWatchdog::Async: ???\n");
+	CHECK(0 == 1); // NOT_REACHED
+
 UNLOCK_AND_RETURN:
-	dprintf(2, "TimeoutWatchdog::Async: active_ %d stopping_ %d\n", w->active_, w->stopping_);
 	uv_mutex_unlock(&w->lock_);
 	return;
 }
 
-bool TimeoutWatchdog::HasTimerExpired () {
-	uv_mutex_lock(&lock_);
-
-	bool expired = timed_out_;
-
-	dprintf(2, "TimeoutWatchdog::HasTimerExpired: %d\n", expired);
-	uv_mutex_unlock(&lock_);
-
-	return expired;
-}
-
 /* Caller should hold lock_. */
-void TimeoutWatchdog::_StartTimer() {
+void TimeoutWatchdog::_StartTimer(uint64_t expiry_ms) {
 	uint64_t now_ms = uv_hrtime() / 1000000;
-	dprintf(2, "TimeoutWatchdog::_StartTimer: entry at %lld\n", now_ms);
+	dprintf(2, "TimeoutWatchdog::_StartTimer: entry at %lu, expiry_ms %lu\n", now_ms, expiry_ms);
 
-	uv_timer_stop(&timer_); // Make sure it's stopped. Now sure what happens if I start a started timer, but this is cheap since the timer heap has size <= 1.
+	CHECK(!pending_async_ids_.empty());
+	CHECK(stack_num_ != -1);
+
+	uv_timer_stop(&timer_); // Make sure it's stopped. Now sure what happens if I start a started timer, but this is cheap since we only have one timer in our uv timer heap.
 	uint64_t repeat = 0; // Don't repeat; libuv's timers go off at timeout_ms_ intervals accounting for time shaving. We restart with full timeout ourselves.
-	int rc = uv_timer_start(&timer_, &TimeoutWatchdog::Timer, timeout_ms_, repeat);
+	int rc = uv_timer_start(&timer_, &TimeoutWatchdog::Timer, expiry_ms, repeat);
 	CHECK_EQ(0, rc);
 
-	active_ = true;
-}
+	if (expiry_ms < timeout_ms_) {
+		// We are resuing timing an existing stack in response to Leash/Unleash.
+		CHECK(stack_num_at_timer_start_ == stack_num_);
+	}
+	else {
+		timer_start_time_ms_ = now_ms;
+		stack_num_at_timer_start_ = stack_num_;
+	}
 
+	dprintf(2, "TimeoutWatchdog::_StartTimer: timer_start_time_ms_ %llu stack_num_at_timer_start_ %ld\n", now_ms, stack_num_);
+	return;
+}
 
 void TimeoutWatchdog::Timer(uv_timer_t* timer) {
   TimeoutWatchdog* w = ContainerOf(&TimeoutWatchdog::timer_, timer);
 
-	uint64_t last_timeout_ns, now_ns, since_in_ms;
+	uint64_t now_ms = uv_hrtime() / 1000000; /* 10e9 / 10e6 = 10e3 */
+	bool should_throw = false;
 
-  dprintf(2, "TimeoutWatchdog::Timer: entry at %ld\n", (long) time(NULL));
+  dprintf(2, "TimeoutWatchdog::Timer: entry at %llu\n", now_ms);
 	uv_mutex_lock(&w->lock_);
 
+	/* Reasons not to throw a timeout. */
+
+	// 1. We should stop.
 	if (w->stopping_) {
-			dprintf(2, "TimeoutWatchdog::Timer: stopping_, returning early\n");
-			goto UNLOCK_AND_RETURN;
+		dprintf(2, "TimeoutWatchdog::Timer: stopping_, returning early\n");
+		goto UNLOCK_AND_RETURN;
 	}
 
-	last_timeout_ns = w->time_of_last_timeout_ns_;
-	now_ns = uv_hrtime();
-	CHECK(last_timeout_ns < now_ns);
-	since_in_ms = (now_ns - last_timeout_ns) / 1000000; // 10e9 / 10e6 = 10e3
-
-	if (0 < last_timeout_ns) { // Check after the first timeout
-		dprintf(2, "TimeoutWatchdog::Timer: %lld ms since last timeout (timeout_ms %lld)\n", since_in_ms, w->timeout_ms_);
-		CHECK(w->timeout_ms_ <= since_in_ms + 1); // Timeouts should be well spaced. +1 to account for truncating effect of division.
+	// 2. The loop has moved on, and Async hasn't had a chance to go yet. */
+	if (w->stack_num_at_timer_start_ != w->stack_num_) {
+		dprintf(2, "TimeoutWatchdog::Timer: timer is for an old async id, returning early\n");
+		goto UNLOCK_AND_RETURN;
 	}
 
-	CHECK(w->active_);
-  w->timed_out_ = true;
-  dprintf(2, "TimeoutWatchdog::Timer: Calling isolate()->Timeout()\n");
-  w->isolate()->Timeout(); // TODO Is it safe to call Timeout if the previous Timeout interrupt has been handled but the Timeout it threw hasn't cleared yet? Need to modify V8-land?
+	// 3. We never throw while leashed.
+	if (w->leashed_) {
+		dprintf(2, "TimeoutWatchdog::Timer: leashed_, returning early\n");
+		goto UNLOCK_AND_RETURN;
+	}
 
-	w->time_of_last_timeout_ns_ = now_ns;
-	w->_StartTimer();
+	// 4. We might want to reset the timer but not throw.
+	//    If the current timer predates a Leash that threw in the same stack,
+	//    then we should reset the timer but not throw.
+	should_throw = true;
+	if (w->stack_num_at_unleash_ == w->stack_num_ &&
+		  w->timer_start_time_ms_ < w->time_at_leash_ms_ &&
+			w->threw_while_leashed_) {
+		dprintf(2, "TimeoutWatchdog::Timer:: Timer predates most recent leash and that leash threw. Restarting the timer.\n");
+		should_throw = false;
+	}
+
+	if (should_throw) {
+		/* No more reasons, so we'll throw. */
+		dprintf(2, "TimeoutWatchdog::Timer: Throwing a timeout\n");
+		w->isolate()->Timeout(); // TODO Is it safe to call Timeout if the previous Timeout interrupt has been handled but the Timeout it threw hasn't cleared yet? Need to modify V8-land? Will this ever happen with a "reasonable" timeout_ms_?
+	}
+
+	dprintf(2, "TimeoutWatchdog::Timer: Resetting the timer in case of a bad exception handler.\n");
+	w->_StartTimer(w->timeout_ms_);
 
 UNLOCK_AND_RETURN:
   dprintf(2, "TimeoutWatchdog::Timer: return\n");

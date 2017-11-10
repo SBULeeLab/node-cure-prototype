@@ -27,6 +27,7 @@
 #include "node_crypto_groups.h"
 #include "node_mutex.h"
 #include "tls_wrap.h"  // TLSWrap
+#include "node_watchdog.h"
 
 #include "async-wrap.h"
 #include "async-wrap-inl.h"
@@ -5277,7 +5278,8 @@ class PBKDF2Request : public AsyncWrap {
         salt_(salt),
         keylen_(keylen),
         key_(node::Malloc(keylen)),
-        iter_(iter) {
+        iter_(iter),
+				threw_timeout_(false) {
     Wrap(object, this);
   }
 
@@ -5316,6 +5318,8 @@ class PBKDF2Request : public AsyncWrap {
 
 	static void Killed(void *dat);
 
+  bool threw_timeout_;
+
  private:
   uv_work_t work_req_;
   const EVP_MD* digest_;
@@ -5352,8 +5356,10 @@ void PBKDF2Request::Work(uv_work_t* work_req) {
 // Recovery: - ask libuv to kill the runaway thread (should be quick, it's just burning the CPU)
 //           - don't return in After until the runaway thread is dead
 uint64_t PBKDF2Request::TimedOut(uv_work_t* work_req, void **dat) {
+  PBKDF2Request* req = ContainerOf(&PBKDF2Request::work_req_, work_req);
 	dprintf(2, "PBKDF2Request::TimedOut: Timed out on work_req %p\n", work_req);
 	*dat = work_req->data; // post in Killed
+	req->threw_timeout_ = true;
 	return 0;
 }
 
@@ -5449,6 +5455,7 @@ void PBKDF2Request::Killed(void *dat) {
 
 
 void PBKDF2(const FunctionCallbackInfo<Value>& args) {
+	uint64_t remaining_ms = timeout_watchdog->Leash();
   Environment* env = Environment::GetCurrent(args);
 
   const EVP_MD* digest = nullptr;
@@ -5547,6 +5554,7 @@ void PBKDF2(const FunctionCallbackInfo<Value>& args) {
 	req->work_req()->data = semas; /* Share with worker. */
 
   if (args[5]->IsFunction()) {
+		timeout_watchdog->Unleash(false);
     obj->Set(env->ondone_string(), args[5]);
 
     if (env->in_domain()) {
@@ -5568,6 +5576,7 @@ void PBKDF2(const FunctionCallbackInfo<Value>& args) {
 
 		uv_queue_work_prio(env->event_loop(),
                   req->work_req(),
+									remaining_ms,
                   PBKDF2Request::Work,
 									PBKDF2Request::TimedOut,
                   PBKDF2Request::After_sync2async,
@@ -5586,10 +5595,12 @@ void PBKDF2(const FunctionCallbackInfo<Value>& args) {
     req->After(&argv); /* This one will set a timeout error on TIMEOUT. */
     delete req;
 
-    if (argv[0]->IsObject())
+    if (argv[0]->IsObject()) {
       env->isolate()->ThrowException(argv[0]);
+		}
     else
       args.GetReturnValue().Set(argv[1]);
+		timeout_watchdog->Unleash(req->threw_timeout_);
   }
   return;
 
@@ -5614,7 +5625,8 @@ class RandomBytesRequest : public AsyncWrap {
         error_(0),
         size_(size),
         data_(data),
-        free_mode_(free_mode) {
+        free_mode_(free_mode),
+				threw_timeout_(false) {
     Wrap(object, this);
   }
 
@@ -5666,6 +5678,8 @@ class RandomBytesRequest : public AsyncWrap {
 
   uv_work_t work_req_;
 
+	bool threw_timeout_;
+
  private:
   unsigned long error_;  // NOLINT(runtime/int)
   size_t size_;
@@ -5696,8 +5710,11 @@ void RandomBytesWork(uv_work_t* work_req) {
 // Recovery: - ask libuv to kill the runaway thread (should be quick, it's just burning the CPU)
 //           - don't return in After until the runaway thread is dead
 uint64_t RandomBytesTimedOut(uv_work_t* work_req, void **dat) {
+  RandomBytesRequest* req =
+      ContainerOf(&RandomBytesRequest::work_req_, work_req);
 	dprintf(2, "RandomBytesTimedOut: Timed out on work_req %p\n", work_req);
 	*dat = work_req->data; // post in Killed
+	req->threw_timeout_ = true;
 	return 0;
 }
 
@@ -5821,6 +5838,7 @@ void RandomBytesAfterSync(Environment* env,
 
 
 void RandomBytes(const FunctionCallbackInfo<Value>& args) {
+	uint64_t remaining_ms = timeout_watchdog->Leash();
   Environment* env = Environment::GetCurrent(args);
 
   if (!args[0]->IsUint32()) {
@@ -5848,6 +5866,7 @@ void RandomBytes(const FunctionCallbackInfo<Value>& args) {
 	req->work_req()->data = semas; /* Share with worker. */
 
   if (args[1]->IsFunction()) {
+		timeout_watchdog->Unleash(false);
     obj->Set(env->ondone_string(), args[1]);
 
     if (env->in_domain()) {
@@ -5870,6 +5889,7 @@ void RandomBytes(const FunctionCallbackInfo<Value>& args) {
 
     uv_queue_work_prio(env->event_loop(),
                   req->work_req(),
+									remaining_ms,
                   RandomBytesWork,
 									RandomBytesTimedOut,
                   RandomBytesAfter_sync2async,
@@ -5886,13 +5906,17 @@ void RandomBytes(const FunctionCallbackInfo<Value>& args) {
 
     Local<Value> argv[2];
     RandomBytesAfterSync(env, req, &argv);
+
     if (argv[0]->IsNull())
       args.GetReturnValue().Set(argv[1]);
+
+		timeout_watchdog->Unleash(req->threw_timeout_);
   }
 }
 
 
 void RandomBytesBuffer(const FunctionCallbackInfo<Value>& args) {
+	uint64_t remaining_ms = timeout_watchdog->Leash();
   Environment* env = Environment::GetCurrent(args);
 
   CHECK(args[0]->IsUint8Array());
@@ -5922,6 +5946,7 @@ void RandomBytesBuffer(const FunctionCallbackInfo<Value>& args) {
 	req->work_req()->data = semas; /* Share with worker. */
 
   if (args[3]->IsFunction()) {
+		timeout_watchdog->Unleash(false);
     obj->Set(env->context(), env->ondone_string(), args[3]).FromJust();
 
     if (env->in_domain()) {
@@ -5944,6 +5969,7 @@ void RandomBytesBuffer(const FunctionCallbackInfo<Value>& args) {
 
     uv_queue_work_prio(env->event_loop(),
                   req->work_req(),
+									remaining_ms,
                   RandomBytesWork,
 									RandomBytesTimedOut,
                   RandomBytesAfter_sync2async,
@@ -5960,8 +5986,11 @@ void RandomBytesBuffer(const FunctionCallbackInfo<Value>& args) {
 
     Local<Value> argv[2];
     RandomBytesAfterSync(env, req, &argv);
+
     if (argv[0]->IsNull())
       args.GetReturnValue().Set(argv[1]);
+
+		timeout_watchdog->Unleash(req->threw_timeout_);
   }
 }
 

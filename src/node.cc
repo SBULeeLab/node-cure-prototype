@@ -261,7 +261,7 @@ static double prog_start_time;
 
 static Mutex node_isolate_mutex;
 static v8::Isolate* node_isolate;
-static TimeoutWatchdog *timeout_watchdog;
+TimeoutWatchdog *timeout_watchdog;
 
 node::DebugOptions debug_options;
 
@@ -2568,17 +2568,8 @@ static void TimeoutWatchdogStart(const FunctionCallbackInfo<Value>& args) {
 
 	int64_t async_id = args[0]->IntegerValue();
 	PrintErrorString("TimeoutWatchdogStart: async_id %lld\n", (long long) async_id);
-	timeout_watchdog->StartCountdown(async_id);
+	timeout_watchdog->BeforeHook(async_id);
 }
-
-static void TimeoutWatchdogExpired(const FunctionCallbackInfo<Value>& args) {
-	bool expired = timeout_watchdog->HasTimerExpired();
-	PrintErrorString("TimeoutWatchdogExpired: expired %d\n", expired);
-
-  Environment* env = Environment::GetCurrent(args.GetIsolate());
-	args.GetReturnValue().Set(Boolean::New(env->isolate(), expired));
-}
-
 
 static void TimeoutWatchdogStop(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
@@ -2593,7 +2584,7 @@ static void TimeoutWatchdogStop(const FunctionCallbackInfo<Value>& args) {
 
 	int64_t async_id = args[0]->IntegerValue();
 	PrintErrorString("TimeoutWatchdogStop: async_id %lld\n", (long long) async_id);
-	timeout_watchdog->DisableCountdown(async_id);
+	timeout_watchdog->AfterHook(async_id);
 }
 
 // Microseconds in a second, as a float, used in CPUUsage() below
@@ -3733,7 +3724,6 @@ void SetupProcessObject(Environment* env,
   env->SetMethod(process, "hrtime", Hrtime);
 
   env->SetMethod(process, "_watchdogStart", TimeoutWatchdogStart);
-  env->SetMethod(process, "_watchdogExpired", TimeoutWatchdogExpired);
   env->SetMethod(process, "_watchdogStop", TimeoutWatchdogStop);
 
   env->SetMethod(process, "cpuUsage", CPUUsage);

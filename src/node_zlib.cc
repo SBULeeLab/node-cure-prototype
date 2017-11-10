@@ -21,6 +21,7 @@
 
 #include "node.h"
 #include "node_buffer.h"
+#include "node_watchdog.h"
 
 #include "async-wrap.h"
 #include "async-wrap-inl.h"
@@ -144,6 +145,7 @@ class ZCtx : public AsyncWrap {
   template <bool async>
   static void Write(const FunctionCallbackInfo<Value>& args) {
     CHECK_EQ(args.Length(), 7);
+		uint64_t remaining_ms = timeout_watchdog->Leash();
 
     ZCtx* ctx;
     ASSIGN_OR_RETURN_UNWRAP(&ctx, args.Holder());
@@ -217,6 +219,7 @@ class ZCtx : public AsyncWrap {
 
 			uv_queue_work_prio(ctx->env()->event_loop(),
 										work_req,
+										remaining_ms,
 										ZCtx::Process,
 										ZCtx::TimedOut,
 										ZCtx::After_sync2async,
@@ -232,12 +235,16 @@ class ZCtx : public AsyncWrap {
 			work_req->data = NULL;
 
 			dprintf(2, "ZCtx::Write: Wrapping up\n");
+			bool threw_timeout = (ctx->err_ == ETIMEDOUT);
       if (CheckError(ctx))
         AfterSync(ctx, args);
+
+			timeout_watchdog->Unleash(threw_timeout);
 			return;
     }
 
     // async version
+		timeout_watchdog->Unleash(false);
     uv_queue_work(ctx->env()->event_loop(),
                   work_req,
                   ZCtx::Process,
