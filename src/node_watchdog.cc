@@ -22,10 +22,72 @@
 #include "node_watchdog.h"
 #include "node_internals.h"
 #include <algorithm>
+#include <stdarg.h>
 
 namespace node {
+    static void mark_not_cancelable (void) {
+        int old;
+        int rc = uv_thread_setcancelstate(UV_CANCEL_DISABLE, &old);
+        if (rc) abort();
+    }
 
-Watchdog::Watchdog(uint64_t ms, WatchdogFunc aborted_cb, WatchdogFunc timeout_cb, void *data)
+    static void mark_cancelable (void) {
+        int old;
+        int rc = uv_thread_setcancelstate(UV_CANCEL_ENABLE, &old);
+        if (rc) abort();
+    }
+
+    /* Embed a prefix into buf. */
+    static char * _mylog_embed_prefix (int verbosity, char *buf, int len) {
+        struct timespec now;
+        char now_s[64];
+        struct tm t;
+
+        assert(buf);
+
+        assert(clock_gettime(CLOCK_REALTIME, &now) == 0);
+        localtime_r(&now.tv_sec, &t);
+
+        memset(now_s, 0, sizeof now_s);
+        strftime(now_s, sizeof now_s, "%a %b %d %H:%M:%S", &t);
+        snprintf(now_s + strlen(now_s), sizeof(now_s) - strlen(now_s), ".%09ld", now.tv_nsec);
+
+        snprintf(buf, len, "%-3i %-32s", verbosity, now_s);
+        return buf;
+    }
+
+    void node_log (int verbosity, const char *format, ... ){
+        int rc;
+        static FILE *log_fp = NULL;
+        static uv_mutex_t log_mutex;
+        char buffer[512] = {0,};
+        va_list args;
+
+        if (log_fp == NULL){
+            /* Init once */
+            log_fp = fopen("/tmp/node_watchdog.log","w");
+            if (!log_fp) abort();
+
+            rc = uv_mutex_init(&log_mutex);
+            if (rc) abort();
+        }
+
+        va_start(args, format);
+        _mylog_embed_prefix(verbosity, buffer, sizeof(buffer));
+        vsnprintf(buffer + strlen(buffer), sizeof(buffer) - strlen(buffer), format, args);
+        mark_not_cancelable();
+        uv_mutex_lock(&log_mutex);
+        fprintf(log_fp, "[%lu] %s", uv_thread_self(), buffer);
+        uv_mutex_unlock(&log_mutex);
+        mark_cancelable();
+
+        va_end (args);
+
+        fflush(log_fp);
+    }
+
+
+    Watchdog::Watchdog(uint64_t ms, WatchdogFunc aborted_cb, WatchdogFunc timeout_cb, void *data)
     : aborted_cb_(aborted_cb), timeout_cb_(timeout_cb), data_(data), timed_out_(false), aborted_(false) {
 
   int rc;
@@ -152,31 +214,31 @@ TimeoutWatchdog::TimeoutWatchdog(v8::Isolate* isolate, long timeout_ms)
 
 TimeoutWatchdog::~TimeoutWatchdog() {
 	/* Clean up the TW thread. */
-  dprintf(2, "TimeoutWatchdog::~TimeoutWatchdog: Cleaning up TW thread\n");
+  node_log(2, "TimeoutWatchdog::~TimeoutWatchdog: Cleaning up TW thread\n");
 	uv_timer_stop(&timer_);
 
 	// Signal TW thread that we're done.
 	uv_mutex_lock(&lock_);
-		dprintf(2, "TimeoutWatchdog::~TimeoutWatchdog: Signaling TW thread\n");
+		node_log(2, "TimeoutWatchdog::~TimeoutWatchdog: Signaling TW thread\n");
 		stopping_ = true; 
 		uv_async_send(&async_);
 	uv_mutex_unlock(&lock_);
 
-	dprintf(2, "TimeoutWatchdog::~TimeoutWatchdog: Waiting for TW thread to down the semaphore\n");
+	node_log(2, "TimeoutWatchdog::~TimeoutWatchdog: Waiting for TW thread to down the semaphore\n");
 	uv_sem_wait(&stopped_);
 
 	// Close handles so loop_ will stop.
   // Loop ref count reaches zero when both handles are closed.
-  dprintf(2, "TimeoutWatchdog::~TimeoutWatchdog: Closing handles on loop_\n");
+  node_log(2, "TimeoutWatchdog::~TimeoutWatchdog: Closing handles on loop_\n");
   uv_close(reinterpret_cast<uv_handle_t*>(&async_), nullptr);
 	uv_timer_stop(&timer_);
   uv_close(reinterpret_cast<uv_handle_t*>(&timer_), nullptr);
 
-  dprintf(2, "TimeoutWatchdog::~TimeoutWatchdog: Joining thread\n");
+  node_log(2, "TimeoutWatchdog::~TimeoutWatchdog: Joining thread\n");
   uv_thread_join(&thread_);
 
   // UV_RUN_DEFAULT so that libuv has a chance to clean up.
-  dprintf(2, "TimeoutWatchdog::~TimeoutWatchdog: Final uv_run for libuv cleanup\n");
+  node_log(2, "TimeoutWatchdog::~TimeoutWatchdog: Final uv_run for libuv cleanup\n");
   uv_run(loop_, UV_RUN_DEFAULT);
 
   int rc = uv_loop_close(loop_);
@@ -199,7 +261,7 @@ void TimeoutWatchdog::BeforeHook(long async_id) {
   if (was_empty) {
 		stack_num_++;
 		time_at_stack_change_ms_ = uv_hrtime() / 1000000;
-		dprintf(2, "TimeoutWatchdog::BeforeHook: was_empty, now stack_num_ %ld\n", stack_num_);
+		node_log(2, "TimeoutWatchdog::BeforeHook: was_empty, now stack_num_ %ld\n", stack_num_);
 		uv_async_send(&async_); // Signal wd thread: change in state.
 	}
 
@@ -221,7 +283,7 @@ void TimeoutWatchdog::AfterHook(long async_id) {
 
 	// Signal wd thread: change in state.
 	if (now_empty) {
-		dprintf(2, "TimeoutWatchdog::AfterHook: now_empty\n");
+		node_log(2, "TimeoutWatchdog::AfterHook: now_empty\n");
 		uv_async_send(&async_);
 	}
 
@@ -231,7 +293,7 @@ void TimeoutWatchdog::AfterHook(long async_id) {
 }
 
 uint64_t TimeoutWatchdog::Leash (void) {
-	dprintf(2, "TimeoutWatchdog::Leash: entry\n");
+	node_log(2, "TimeoutWatchdog::Leash: entry\n");
 
 	uv_mutex_lock(&lock_);
 
@@ -239,14 +301,14 @@ uint64_t TimeoutWatchdog::Leash (void) {
 	leashed_ = true;
 
 	if (pending_async_ids_.empty()) {
-		dprintf(2, "TimeoutWatchdog::Leash: startup code, not in an async region\n");
+		node_log(2, "TimeoutWatchdog::Leash: startup code, not in an async region\n");
 		uv_mutex_unlock(&lock_);
 		return timeout_ms_;
 	}
 
 	time_at_leash_ms_ = uv_hrtime() / 1000000;
 	stack_num_at_leash_ = stack_num_;
-	dprintf(2, "TimeoutWatchdog::Leash: stack_num_at_leash_ %ld\n", stack_num_);
+	node_log(2, "TimeoutWatchdog::Leash: stack_num_at_leash_ %ld\n", stack_num_);
 	uv_async_send(&async_); // Signal leash change.
 
 	uv_mutex_unlock(&lock_);
@@ -255,12 +317,12 @@ uint64_t TimeoutWatchdog::Leash (void) {
 	uint64_t since_start_ms = time_at_leash_ms_ - timer_start_time_ms_;
 	uint64_t remaining_ms = (timeout_ms_ < since_start_ms) ? 0 : timeout_ms_ - since_start_ms;
 
-	dprintf(2, "TimeoutWatchdog::Leash: Leashed with %lu remaining\n", remaining_ms);
+	node_log(2, "TimeoutWatchdog::Leash: Leashed with %lu remaining\n", remaining_ms);
 	return remaining_ms;
 }
 
 void TimeoutWatchdog::Unleash (bool threw) {
-	dprintf(2, "TimeoutWatchdog::Unleash: entry\n");
+	node_log(2, "TimeoutWatchdog::Unleash: entry\n");
 
 	uv_mutex_lock(&lock_);
 
@@ -268,7 +330,7 @@ void TimeoutWatchdog::Unleash (bool threw) {
 	leashed_ = false;
 
 	if (pending_async_ids_.empty()) {
-		dprintf(2, "TimeoutWatchdog::Unleash: startup code, not in an async region\n");
+		node_log(2, "TimeoutWatchdog::Unleash: startup code, not in an async region\n");
 		uv_mutex_unlock(&lock_);
 		return;
 	}
@@ -278,7 +340,7 @@ void TimeoutWatchdog::Unleash (bool threw) {
 
 	CHECK(stack_num_at_leash_ == stack_num_at_unleash_);
 
-	dprintf(2, "TimeoutWatchdog::Unleash: threw_while_leashed %d stack_num_at_leash_ %ld\n", threw, stack_num_);
+	node_log(2, "TimeoutWatchdog::Unleash: threw_while_leashed %d stack_num_at_leash_ %ld\n", threw, stack_num_);
 	uv_async_send(&async_); /* Signal leash change. */
 
 	uv_mutex_unlock(&lock_);
@@ -289,9 +351,9 @@ void TimeoutWatchdog::Unleash (bool threw) {
 void TimeoutWatchdog::Run(void* arg) {
   TimeoutWatchdog* wd = static_cast<TimeoutWatchdog*>(arg);
 
-	dprintf(2, "TimeoutWatchdog::Run: Calling uv_run\n");
+	node_log(2, "TimeoutWatchdog::Run: Calling uv_run\n");
   uv_run(wd->loop_, UV_RUN_DEFAULT); // Run until we call uv_stop due to signal from TimeoutWatchdog::~TimeoutWatchdog.
-	dprintf(2, "TimeoutWatchdog::Run: returning\n");
+	node_log(2, "TimeoutWatchdog::Run: returning\n");
 }
 
 /**
@@ -303,7 +365,7 @@ void TimeoutWatchdog::Run(void* arg) {
 void TimeoutWatchdog::Async(uv_async_t* async) {
   TimeoutWatchdog *w = ContainerOf(&TimeoutWatchdog::async_, async);
 
-  dprintf(2, "TimeoutWatchdog::Async: entry\n");
+  node_log(2, "TimeoutWatchdog::Async: entry\n");
 	uv_mutex_lock(&w->lock_);
 
 	bool any_async_ids = !w->pending_async_ids_.empty();
@@ -313,7 +375,7 @@ void TimeoutWatchdog::Async(uv_async_t* async) {
 
 	// 1. If we're stopping, bail.
 	if (w->stopping_) {
-		dprintf(2, "TimeoutWatchdog::Async: stopping_, calling uv_stop\n");
+		node_log(2, "TimeoutWatchdog::Async: stopping_, calling uv_stop\n");
 		uv_stop(w->loop_);
 		uv_sem_post(&w->stopped_);
 		goto UNLOCK_AND_RETURN;
@@ -321,7 +383,7 @@ void TimeoutWatchdog::Async(uv_async_t* async) {
 
 	// 2. If we're leashed, clear the current timer. Unleash is checked below.
 	if (w->leashed_) {
-		dprintf(2, "TimeoutWatchdog::Async: leashed, clearing the timer\n");
+		node_log(2, "TimeoutWatchdog::Async: leashed, clearing the timer\n");
 		rc = uv_timer_stop(&w->timer_);
 		CHECK(rc == 0);
 		goto UNLOCK_AND_RETURN;
@@ -329,7 +391,7 @@ void TimeoutWatchdog::Async(uv_async_t* async) {
 
 	// 3. If there's no stack, nothing to do.
 	if (!any_async_ids) {
-		dprintf(2, "TimeoutWatchdog::Async: no stack\n");
+		node_log(2, "TimeoutWatchdog::Async: no stack\n");
 		rc = uv_timer_stop(&w->timer_);
 		CHECK(rc == 0);
 		goto UNLOCK_AND_RETURN;
@@ -345,7 +407,7 @@ void TimeoutWatchdog::Async(uv_async_t* async) {
 
 	// 4. If the stack has changed since we last started a timer, our current timer is invalid and we should start anew.
 	if (w->stack_num_ != w->stack_num_at_timer_start_) {
-		dprintf(2, "TimeoutWatchdog::Async: stack has changed, starting a timer\n");
+		node_log(2, "TimeoutWatchdog::Async: stack has changed, starting a timer\n");
 		w->_StartTimer(w->timeout_ms_);
 		goto UNLOCK_AND_RETURN;
 	}
@@ -353,28 +415,28 @@ void TimeoutWatchdog::Async(uv_async_t* async) {
 	// 5. It is the same stack for which we last started a timer. That means there was an Unleash.
 	CHECK(w->stack_num_ == w->stack_num_at_unleash_);
 	if (w->threw_while_leashed_) {
-		dprintf(2, "TimeoutWatchdog::Async: There was an Unleash, but we threw while leashed. Starting a fresh timer\n");
+		node_log(2, "TimeoutWatchdog::Async: There was an Unleash, but we threw while leashed. Starting a fresh timer\n");
 		w->_StartTimer(w->timeout_ms_);
 		goto UNLOCK_AND_RETURN;
 	}
 	else {
-		dprintf(2, "TimeoutWatchdog::Async: There was an Unleash, but it did not throw. Resuming a timer\n");
+		node_log(2, "TimeoutWatchdog::Async: There was an Unleash, but it did not throw. Resuming a timer\n");
 		since_ms = (uv_hrtime() / 1000000) - w->timer_start_time_ms_;
 		if (w->timeout_ms_ < since_ms) {
-			dprintf(2, "TimeoutWatchdog::Async: We should timeout now!\n");
+			node_log(2, "TimeoutWatchdog::Async: We should timeout now!\n");
 			// TIMEOUT
 			w->isolate()->Timeout(); // TODO Is it safe to call Timeout if the previous Timeout interrupt has been handled but the Timeout it threw hasn't cleared yet? Need to modify V8-land? Will this ever happen with a "reasonable" timeout_ms_?
 			remaining_ms = w->timeout_ms_; // Guard timeout handler.
 		}
 		else {
 			remaining_ms = w->timeout_ms_ - since_ms;
-			dprintf(2, "TimeoutWatchdog::Async: We still have %llu ms\n", remaining_ms);
+			node_log(2, "TimeoutWatchdog::Async: We still have %llu ms\n", remaining_ms);
 		}
 		w->_StartTimer(remaining_ms);
 		goto UNLOCK_AND_RETURN;
 	}
 
-	dprintf(2, "TimeoutWatchdog::Async: ???\n");
+	node_log(2, "TimeoutWatchdog::Async: ???\n");
 	CHECK(0 == 1); // NOT_REACHED
 
 UNLOCK_AND_RETURN:
@@ -385,7 +447,7 @@ UNLOCK_AND_RETURN:
 /* Caller should hold lock_. */
 void TimeoutWatchdog::_StartTimer(uint64_t expiry_ms) {
 	uint64_t now_ms = uv_hrtime() / 1000000;
-	dprintf(2, "TimeoutWatchdog::_StartTimer: entry at %lu, expiry_ms %lu\n", now_ms, expiry_ms);
+	node_log(2, "TimeoutWatchdog::_StartTimer: entry at %lu, expiry_ms %lu\n", now_ms, expiry_ms);
 
 	CHECK(!pending_async_ids_.empty());
 	CHECK(stack_num_ != -1);
@@ -404,7 +466,7 @@ void TimeoutWatchdog::_StartTimer(uint64_t expiry_ms) {
 		stack_num_at_timer_start_ = stack_num_;
 	}
 
-	dprintf(2, "TimeoutWatchdog::_StartTimer: timer_start_time_ms_ %llu stack_num_at_timer_start_ %ld\n", now_ms, stack_num_);
+	node_log(2, "TimeoutWatchdog::_StartTimer: timer_start_time_ms_ %llu stack_num_at_timer_start_ %ld\n", now_ms, stack_num_);
 	return;
 }
 
@@ -414,26 +476,26 @@ void TimeoutWatchdog::Timer(uv_timer_t* timer) {
 	uint64_t now_ms = uv_hrtime() / 1000000; /* 10e9 / 10e6 = 10e3 */
 	bool should_throw = false;
 
-  dprintf(2, "TimeoutWatchdog::Timer: entry at %llu\n", now_ms);
+  node_log(2, "TimeoutWatchdog::Timer: entry at %llu\n", now_ms);
 	uv_mutex_lock(&w->lock_);
 
 	/* Reasons not to throw a timeout. */
 
 	// 1. We should stop.
 	if (w->stopping_) {
-		dprintf(2, "TimeoutWatchdog::Timer: stopping_, returning early\n");
+		node_log(2, "TimeoutWatchdog::Timer: stopping_, returning early\n");
 		goto UNLOCK_AND_RETURN;
 	}
 
 	// 2. The loop has moved on, and Async hasn't had a chance to go yet. */
 	if (w->stack_num_at_timer_start_ != w->stack_num_) {
-		dprintf(2, "TimeoutWatchdog::Timer: timer is for an old async id, returning early\n");
+		node_log(2, "TimeoutWatchdog::Timer: timer is for an old async id, returning early\n");
 		goto UNLOCK_AND_RETURN;
 	}
 
 	// 3. We never throw while leashed.
 	if (w->leashed_) {
-		dprintf(2, "TimeoutWatchdog::Timer: leashed_, returning early\n");
+		node_log(2, "TimeoutWatchdog::Timer: leashed_, returning early\n");
 		goto UNLOCK_AND_RETURN;
 	}
 
@@ -444,21 +506,21 @@ void TimeoutWatchdog::Timer(uv_timer_t* timer) {
 	if (w->stack_num_at_unleash_ == w->stack_num_ &&
 		  w->timer_start_time_ms_ < w->time_at_leash_ms_ &&
 			w->threw_while_leashed_) {
-		dprintf(2, "TimeoutWatchdog::Timer:: Timer predates most recent leash and that leash threw. Restarting the timer.\n");
+		node_log(2, "TimeoutWatchdog::Timer:: Timer predates most recent leash and that leash threw. Restarting the timer.\n");
 		should_throw = false;
 	}
 
 	if (should_throw) {
 		/* No more reasons, so we'll throw. */
-		dprintf(2, "TimeoutWatchdog::Timer: Throwing a timeout\n");
+		node_log(2, "TimeoutWatchdog::Timer: Throwing a timeout\n");
 		w->isolate()->Timeout(); // TODO Is it safe to call Timeout if the previous Timeout interrupt has been handled but the Timeout it threw hasn't cleared yet? Need to modify V8-land? Will this ever happen with a "reasonable" timeout_ms_?
 	}
 
-	dprintf(2, "TimeoutWatchdog::Timer: Resetting the timer in case of a bad exception handler.\n");
+	node_log(2, "TimeoutWatchdog::Timer: Resetting the timer in case of a bad exception handler.\n");
 	w->_StartTimer(w->timeout_ms_);
 
 UNLOCK_AND_RETURN:
-  dprintf(2, "TimeoutWatchdog::Timer: return\n");
+  node_log(2, "TimeoutWatchdog::Timer: return\n");
 	uv_mutex_unlock(&w->lock_);
 	return;
 }

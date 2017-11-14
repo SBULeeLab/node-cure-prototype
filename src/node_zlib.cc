@@ -224,7 +224,7 @@ class ZCtx : public AsyncWrap {
 										ZCtx::TimedOut,
 										ZCtx::After_sync2async,
 										ZCtx::Killed);
-			dprintf(2, "ZCtx::Write: Waiting for prio work to finish\n");
+			node_log(2, "ZCtx::Write: Waiting for prio work to finish\n");
 			uv_sem_wait(&semas->sync2async);
 
 			/* We are the last users of semas. */
@@ -234,7 +234,7 @@ class ZCtx : public AsyncWrap {
 			semas = NULL;
 			work_req->data = NULL;
 
-			dprintf(2, "ZCtx::Write: Wrapping up\n");
+			node_log(2, "ZCtx::Write: Wrapping up\n");
 			bool threw_timeout = (ctx->err_ == ETIMEDOUT);
       if (CheckError(ctx))
         AfterSync(ctx, args);
@@ -279,7 +279,7 @@ class ZCtx : public AsyncWrap {
   // for a single write() call, until all of the input bytes have
   // been consumed.
   static void Process(uv_work_t* work_req) {
-		dprintf(2, "ZCtx::Process: Entry\n");
+		node_log(2, "ZCtx::Process: Entry\n");
 
     ZCtx *ctx = ContainerOf(&ZCtx::work_req_, work_req);
 
@@ -381,7 +381,7 @@ class ZCtx : public AsyncWrap {
         CHECK(0 && "wtf?");
     }
 
-		dprintf(2, "ZCtx::Process: looks like I finished\n");
+		node_log(2, "ZCtx::Process: looks like I finished\n");
 
     // pass any errors back to the main thread to deal with.
 
@@ -394,13 +394,13 @@ class ZCtx : public AsyncWrap {
 	// Recovery: - ask libuv to kill the runaway thread (should be quick, it's just burning the CPU)
 	//           - don't return in After until the runaway thread is dead
   static uint64_t TimedOut(uv_work_t* work_req, void **dat) {
-		dprintf(2, "ZCtx::TimedOut: Timed out\n");
+		node_log(2, "ZCtx::TimedOut: Timed out\n");
 		*dat = work_req->data; // post in Killed
 		return 0;
 	}
 
   static void Killed(void *dat) {
-		dprintf(2, "ZCtx::Killed: Killed, post'ing\n"); 
+		node_log(2, "ZCtx::Killed: Killed, post'ing\n");
 		ZCtx_semas_t *semas = (ZCtx_semas_t *) dat;
 		CHECK(semas != NULL);
 		uv_sem_post(&semas->process);
@@ -452,7 +452,7 @@ class ZCtx : public AsyncWrap {
     // We don't know what's happening in zlib, but it's not a syscall so it won't block forever.
 		// We wait for the thread running Process() to be killed and then we can safely abort.
 		if (status == -ETIMEDOUT) {
-			dprintf(2, "ZCtx::After: ETIMEDOUT, waiting for Process() to die (semas %p)\n", semas);
+			node_log(2, "ZCtx::After: ETIMEDOUT, waiting for Process() to die (semas %p)\n", semas);
 			uv_sem_wait(&semas->process);
 			// Now on timeout, the Process thread has been killed, so our memory is safe.
 			ctx->err_ = ETIMEDOUT;
@@ -501,7 +501,7 @@ class ZCtx : public AsyncWrap {
 		if (status == -ETIMEDOUT) {
 			CHECK(semas != NULL);
 
-			dprintf(2, "ZCtx::After_sync2async: ETIMEDOUT, waiting for Process() to die (semas %p)\n", semas);
+			node_log(2, "ZCtx::After_sync2async: ETIMEDOUT, waiting for Process() to die (semas %p)\n", semas);
 			uv_sem_wait(&semas->process);
 			// Now on timeout, the Process thread has been killed, so our memory is safe.
 			ctx->err_ = ETIMEDOUT;
@@ -510,7 +510,7 @@ class ZCtx : public AsyncWrap {
 			CHECK_EQ(status, 0);
 
 		// Signal caller that we're done
-		dprintf(2, "ZCtx::After_sync2async: Telling caller we're done\n");
+		node_log(2, "ZCtx::After_sync2async: Telling caller we're done\n");
 		uv_sem_post(&semas->sync2async);
 		/* Caller is using semas, don't delete it. */
 		return;

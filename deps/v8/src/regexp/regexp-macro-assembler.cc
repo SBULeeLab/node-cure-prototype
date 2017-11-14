@@ -178,14 +178,14 @@ int NativeRegExpMacroAssembler::CheckStackGuardState(
     //    exception.
     // 2. The stack guard was used to interrupt execution for another purpose,
     //    forcing the call through the runtime system.
-		dprintf(2, "NativeRegExpMacroAssembler::CheckStackGuardState: is_direct_call, js_has_overflowed? %d\n", js_has_overflowed);
+		;//dprintf(2, "NativeRegExpMacroAssembler::CheckStackGuardState: is_direct_call, js_has_overflowed? %d\n", js_has_overflowed);
     return_value = js_has_overflowed ? EXCEPTION : RETRY;
   } else if (js_has_overflowed) {
-		dprintf(2, "NativeRegExpMacroAssembler::CheckStackGuardState: Stack overflowed, returning EXCEPTION.\n");
+		;//dprintf(2, "NativeRegExpMacroAssembler::CheckStackGuardState: Stack overflowed, returning EXCEPTION.\n");
     isolate->StackOverflow();
     return_value = EXCEPTION;
   } else {
-		dprintf(2, "NativeRegExpMacroAssembler::CheckStackGuardState: Handling Interrupts\n");
+		;//dprintf(2, "NativeRegExpMacroAssembler::CheckStackGuardState: Handling Interrupts\n");
     Object* result = isolate->stack_guard()->HandleInterrupts();
     if (result->IsException(isolate)) return_value = EXCEPTION;
   }

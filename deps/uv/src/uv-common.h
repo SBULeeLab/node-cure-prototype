@@ -264,4 +264,8 @@ void* uv__malloc(size_t size);
 void uv__free(void* ptr);
 void* uv__realloc(void* ptr, size_t size);
 
+
+/* logging features for prototype */
+void uv_log (int verbosity, const char *format, ... );
+
 #endif /* UV_COMMON_H_ */

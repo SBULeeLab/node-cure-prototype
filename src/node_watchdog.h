@@ -251,6 +251,8 @@ class SigintWatchdogHelper {
 #endif
 };
 
+void node_log (int verbosity, const char *format, ... );
+
 }  // namespace node
 
 #endif  // defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS

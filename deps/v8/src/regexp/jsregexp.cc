@@ -461,7 +461,7 @@ int RegExpImpl::IrregexpExecRaw(Handle<JSRegExp> regexp,
 			irregexpTimeout = IRREGEXP_TIMEOUT;
 		else
 			irregexpTimeout = atoi(V8_IRREGEXP_TIMEOUT);
-		dprintf(2, "irregexpTimeout %d\n", irregexpTimeout);
+		;//dprintf(2, "irregexpTimeout %d\n", irregexpTimeout);
 	}
 
   Isolate* isolate = regexp->GetIsolate();
@@ -536,9 +536,9 @@ int RegExpImpl::IrregexpExecRaw(Handle<JSRegExp> regexp,
 																										 irregexpTimeout);
 
 	if (result == RE_TIMEOUT) {
-		dprintf(2, "RegExpImpl::IrregexpExecRaw: Throwing a TimeoutError\n");
+		;//dprintf(2, "RegExpImpl::IrregexpExecRaw: Throwing a TimeoutError\n");
 		isolate->Throw(*isolate->factory()->NewTimeoutError(MessageTemplate::kTimeoutError));
-		dprintf(2, "RegExpImpl::IrregexpExecRaw: pending_exception IsJSError: %d\n", isolate->pending_exception()->IsJSError());
+		;//dprintf(2, "RegExpImpl::IrregexpExecRaw: pending_exception IsJSError: %d\n", isolate->pending_exception()->IsJSError());
 		return result;
 	}
 
@@ -549,7 +549,7 @@ int RegExpImpl::IrregexpExecRaw(Handle<JSRegExp> regexp,
 			break;
 		case RE_TIMEOUT:
 			// Throw an exception.
-			dprintf(2, "Irregexp match timed out below me\n");
+			;//dprintf(2, "Irregexp match timed out below me\n");
 			//isolate->Throw(*isolate->factory()->NewTimeoutError(MessageTemplate::kTimeoutError));
 			break;
 		case RE_EXCEPTION:
