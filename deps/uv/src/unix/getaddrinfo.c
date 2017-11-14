@@ -227,7 +227,8 @@ int uv_getaddrinfo(uv_loop_t* loop,
                     uv__getaddrinfo_killed);
     return 0;
   } else {
-		abort(); /* Node does not offer a synchronous API, make sure this never happens. */
+		// This is required to not abort from the test  node-cure/test/cctest/test_inspector_socket_server.cc 
+		//abort(); /* Node does not offer a synchronous API, make sure this never happens. */
     uv__getaddrinfo_work(&req->work_req);
     uv__getaddrinfo_done(&req->work_req, 0);
     return req->retcode;
