@@ -649,6 +649,7 @@
       'defines': [ 'NODE_WANT_INTERNALS=1' ],
 
       'sources': [
+	'src/node_watchdog.cc',
         'src/node_platform.cc',
         'src/node_platform.h',
         'test/cctest/node_test_fixture.cc',
