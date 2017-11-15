@@ -501,6 +501,7 @@ void FillStatsArray(double* fields, const uv_stat_t* s) {
 // a string or undefined when the file cannot be opened.  The speedup
 // comes from not creating Error objects on failure.
 static void InternalModuleReadFile(const FunctionCallbackInfo<Value>& args) {
+	uint64_t remaining_ms;
   Environment* env = Environment::GetCurrent(args);
   uv_loop_t* loop = env->event_loop();
 
@@ -511,8 +512,11 @@ static void InternalModuleReadFile(const FunctionCallbackInfo<Value>& args) {
     return;  // Contains a nul byte.
 
   uv_fs_t open_req;
+	remaining_ms = timeout_watchdog->Leash();
+	open_req.timeout = remaining_ms;
   const int fd = uv_fs_open(loop, &open_req, *path, O_RDONLY, 0, nullptr);
   uv_fs_req_cleanup(&open_req);
+	timeout_watchdog->Unleash(fd == -ETIMEDOUT);
 
   if (fd < 0) {
     return;
@@ -522,6 +526,7 @@ static void InternalModuleReadFile(const FunctionCallbackInfo<Value>& args) {
   std::vector<char> chars;
   int64_t offset = 0;
   ssize_t numchars;
+	bool timed_out = false;
   do {
     const size_t start = chars.size();
     chars.resize(start + kBlockSize);
@@ -531,16 +536,32 @@ static void InternalModuleReadFile(const FunctionCallbackInfo<Value>& args) {
     buf.len = kBlockSize;
 
     uv_fs_t read_req;
+		remaining_ms = timeout_watchdog->Leash();
+		read_req.timeout = remaining_ms;
     numchars = uv_fs_read(loop, &read_req, fd, &buf, 1, offset, nullptr);
     uv_fs_req_cleanup(&read_req);
+		timeout_watchdog->Unleash(numchars == -ETIMEDOUT);
+
+		if (numchars == -ETIMEDOUT) {
+			timed_out = true;
+			break;
+		}
 
     CHECK_GE(numchars, 0);
     offset += numchars;
   } while (static_cast<size_t>(numchars) == kBlockSize);
 
   uv_fs_t close_req;
-  CHECK_EQ(0, uv_fs_close(loop, &close_req, fd, nullptr));
+	remaining_ms = timeout_watchdog->Leash();
+	close_req.timeout = remaining_ms;
+	int rc = uv_fs_close(loop, &close_req, fd, nullptr);
   uv_fs_req_cleanup(&close_req);
+	timeout_watchdog->Unleash(rc == -ETIMEDOUT);
+
+	if (timed_out || rc == -ETIMEDOUT)
+		return;
+
+  CHECK_EQ(0, rc);
 
   size_t start = 0;
   if (offset >= 3 && 0 == memcmp(&chars[0], "\xEF\xBB\xBF", 3)) {
@@ -565,12 +586,15 @@ static void InternalModuleStat(const FunctionCallbackInfo<Value>& args) {
   node::Utf8Value path(env->isolate(), args[0]);
 
   uv_fs_t req;
+	uint64_t remaining_ms = timeout_watchdog->Leash();
+	req.timeout = remaining_ms;
   int rc = uv_fs_stat(env->event_loop(), &req, *path, nullptr);
   if (rc == 0) {
     const uv_stat_t* const s = static_cast<const uv_stat_t*>(req.ptr);
     rc = !!(s->st_mode & S_IFDIR);
   }
   uv_fs_req_cleanup(&req);
+	timeout_watchdog->Unleash(rc == -ETIMEDOUT);
 
   args.GetReturnValue().Set(rc);
 }
