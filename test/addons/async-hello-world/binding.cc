@@ -79,8 +79,8 @@ void Method(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
   uv_queue_work(uv_default_loop(),
                 &req->req,
-                DoAsync,
-                (uv_after_work_cb)AfterAsync<use_makecallback>);
+                DoAsync, nullptr,
+                (uv_after_work_cb)AfterAsync<use_makecallback>, nullptr);
 }
 
 void init(v8::Local<v8::Object> exports, v8::Local<v8::Object> module) {
