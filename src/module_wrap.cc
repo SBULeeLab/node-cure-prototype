@@ -8,6 +8,7 @@
 #include "util.h"
 #include "util-inl.h"
 #include "node_internals.h"
+#include "node_watchdog.h"
 
 namespace node {
 namespace loader {
@@ -306,16 +307,31 @@ inline const struct read_result read_file(uv_file file) {
   struct read_result ret;
   std::string src;
   uv_fs_t req;
+  uint64_t remaining_ms;
   void* base = malloc(4096);
   if (base == nullptr) {
     ret.had_error = true;
     return ret;
   }
   uv_buf_t buf = uv_buf_init(static_cast<char*>(base), 4096);
-  uv_fs_read(uv_default_loop(), &req, file, &buf, 1, 0, nullptr);
+  remaining_ms = timeout_watchdog->Leash();
+  req.timeout = remaining_ms;
+  const int result = uv_fs_read(uv_default_loop(), &req, file, &buf, 1, 0, nullptr);
+  timeout_watchdog->Unleash(result == -ETIMEDOUT);
+  if (result == -ETIMEDOUT){
+    ret.had_error = true;
+    return ret;
+  }
   while (req.result > 0) {
     src += std::string(static_cast<const char*>(buf.base), req.result);
+    remaining_ms = timeout_watchdog->Leash();
+    req.timeout = remaining_ms;
     uv_fs_read(uv_default_loop(), &req, file, &buf, 1, src.length(), nullptr);
+    timeout_watchdog->Unleash(result == -ETIMEDOUT);
+    if (result == -ETIMEDOUT){
+        ret.had_error = true;
+        return ret;
+    }
   }
   ret.source = src;
   return ret;
@@ -333,21 +349,37 @@ inline const struct file_check check_file(const URL& search,
   if (path.empty()) {
     return ret;
   }
+  uint64_t remaining_ms = timeout_watchdog->Leash();
+  fs_req.timeout = remaining_ms;
   uv_fs_open(nullptr, &fs_req, path.c_str(), O_RDONLY, 0, nullptr);
   auto fd = fs_req.result;
+  timeout_watchdog->Unleash(fd == -ETIMEDOUT);
+
+
   if (fd < 0) {
     return ret;
   }
   if (!allow_dir) {
-    uv_fs_fstat(nullptr, &fs_req, fd, nullptr);
-    if (fs_req.statbuf.st_mode & S_IFDIR) {
-      uv_fs_close(nullptr, &fs_req, fd, nullptr);
+    remaining_ms = timeout_watchdog->Leash();
+    fs_req.timeout= remaining_ms;
+    const int rc = uv_fs_fstat(nullptr, &fs_req, fd, nullptr);
+    timeout_watchdog->Unleash(rc == -ETIMEDOUT);
+    if (fs_req.statbuf.st_mode & S_IFDIR || rc == -ETIMEDOUT) {
+      remaining_ms = timeout_watchdog->Leash();
+      fs_req.timeout= remaining_ms;
+      const int rc = uv_fs_close(nullptr, &fs_req, fd, nullptr);
+      timeout_watchdog->Unleash(rc == -ETIMEDOUT);
       return ret;
     }
   }
   ret.failed = false;
   ret.file = fd;
-  if (close) uv_fs_close(nullptr, &fs_req, fd, nullptr);
+  if (close) {
+      remaining_ms = timeout_watchdog->Leash();
+      fs_req.timeout= remaining_ms;
+      const int rc = uv_fs_close(nullptr, &fs_req, fd, nullptr);
+      timeout_watchdog->Unleash(rc == -ETIMEDOUT);
+  }
   return ret;
 }
 URL resolve_extensions(const URL& search, bool check_exact = true) {
