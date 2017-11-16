@@ -237,11 +237,13 @@ UV_DESTRUCTOR(static void cleanup(void)) {
 		abort();
 
     /* Now all the workers are dead. */
-  uv_mutex_destroy(&mutex);
-  uv_cond_destroy(&cond);
+  //TODO destroy these mutexes, currently there is a race where someone can be using the lock at the time of destruction
+  // I hypothesize it is due to a hangman.
+    //uv_mutex_destroy(&mutex);
+  //uv_cond_destroy(&cond);
 
-	uv_mutex_destroy(&prio_mutex);
-	uv_cond_destroy(&prio_cond);
+	//uv_mutex_destroy(&prio_mutex);
+	//uv_cond_destroy(&prio_cond);
 
   initialized = 0;
 }

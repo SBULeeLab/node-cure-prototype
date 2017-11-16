@@ -215,7 +215,6 @@ TimeoutWatchdog::TimeoutWatchdog(v8::Isolate* isolate, long timeout_ms)
 TimeoutWatchdog::~TimeoutWatchdog() {
 	/* Clean up the TW thread. */
   node_log(2, "TimeoutWatchdog::~TimeoutWatchdog: Cleaning up TW thread\n");
-	uv_timer_stop(&timer_);
 
 	// Signal TW thread that we're done.
 	uv_mutex_lock(&lock_);
@@ -226,13 +225,6 @@ TimeoutWatchdog::~TimeoutWatchdog() {
 
 	node_log(2, "TimeoutWatchdog::~TimeoutWatchdog: Waiting for TW thread to down the semaphore\n");
 	uv_sem_wait(&stopped_);
-
-	// Close handles so loop_ will stop.
-  // Loop ref count reaches zero when both handles are closed.
-  node_log(2, "TimeoutWatchdog::~TimeoutWatchdog: Closing handles on loop_\n");
-  uv_close(reinterpret_cast<uv_handle_t*>(&async_), nullptr);
-	uv_timer_stop(&timer_);
-  uv_close(reinterpret_cast<uv_handle_t*>(&timer_), nullptr);
 
   node_log(2, "TimeoutWatchdog::~TimeoutWatchdog: Joining thread\n");
   uv_thread_join(&thread_);
@@ -375,8 +367,15 @@ void TimeoutWatchdog::Async(uv_async_t* async) {
 
 	// 1. If we're stopping, bail.
 	if (w->stopping_) {
-		node_log(2, "TimeoutWatchdog::Async: stopping_, calling uv_stop\n");
+		node_log(2, "TimeoutWatchdog::Async: stopping_, cleaning up and calling uv_stop\n");
+
+		rc = uv_timer_stop(&w->timer_);
+		CHECK(rc == 0);
+        uv_close(reinterpret_cast<uv_handle_t*>(&w->async_), nullptr);
+        uv_close(reinterpret_cast<uv_handle_t*>(&w->timer_), nullptr);
+
 		uv_stop(w->loop_);
+
 		uv_sem_post(&w->stopped_);
 		goto UNLOCK_AND_RETURN;
 	}
