@@ -570,16 +570,18 @@ static void store_resources_in_timeout_buf (uv_fs_t *req) {
   if (req->timeout_buf->resources_set)
 		abort();
 
-	/* TODO 2 < fd: Caller might close stdout and stderr, but ignore for now. */
-	if (req_has_fd(req) && 2 < req->file) {
+	if (req_has_fd(req)) {
 		fd2resource_t *fd2resource;
 		uv_log(2, "store_resources_in_timeout_buf: req %p has an fd so we can get info from fd2resources\n", req);
 
 		BEFORE_FD2RESOURCE_TABLE;
 			fd2resource = fd2resource_find(req->file);
-			if (fd2resource == NULL)
-				abort(); /* TODO Caller can do this and we should propagate an error message. But for now we can make sure fd2resource is stable. */
 		AFTER_FD2RESOURCE_TABLE;
+		if (fd2resource == NULL) {
+            // the file was not found so we must have been passed an invalid file descriptor
+            // this operation should be done after fd2 resource table to mark ourselves back to cancelable.
+            return;
+        }
 
 		ino = fd2resource->ino;
 		rph = fd2resource->rph;
@@ -1629,9 +1631,9 @@ static ssize_t uv__fs_write(uv_fs_t* req) {
     abort();
 #endif
 
-  /* Caller is supposed to have set req->bufs to point to some buf allocated in req->bufs. */
-	if (req->bufs <= req->bufs &&
-		  req->bufs < req->bufs + req->nbufs) {
+  /* Caller is supposed to have set req->bufs to point to some buf allocated in req->timeout_buf->io_bufs. */
+	if (req->timeout_buf->io_bufs <= req->bufs &&
+		  req->bufs < req->timeout_buf->io_bufs + req->nbufs) {
 	}
 	else
 		abort();
