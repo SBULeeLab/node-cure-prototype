@@ -5839,7 +5839,6 @@ void RandomBytesAfterSync(Environment* env,
 
 
 void RandomBytes(const FunctionCallbackInfo<Value>& args) {
-	uint64_t remaining_ms = timeout_watchdog->Leash();
   Environment* env = Environment::GetCurrent(args);
 
   if (!args[0]->IsUint32()) {
@@ -5850,6 +5849,7 @@ void RandomBytes(const FunctionCallbackInfo<Value>& args) {
   if (size < 0 || size > Buffer::kMaxLength)
     return env->ThrowRangeError("size is not a valid Smi");
 
+  uint64_t remaining_ms = timeout_watchdog->Leash();
   Local<Object> obj = env->randombytes_constructor_template()->
       NewInstance(env->context()).ToLocalChecked();
   char* data = node::Malloc(size);
