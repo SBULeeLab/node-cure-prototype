@@ -458,7 +458,8 @@ static void uv__queue_work(struct uv__work* w) {
 static void uv__queue_done(struct uv__work* w, int err) {
   uv_work_t* req;
 
-	if (!w->state_assigned) abort();
+  /* Must have been assigned or canceled... */
+	if (!(w->state_canceled || w->state_assigned)) abort();
 	w->state_done = 1;
 
   req = container_of(w, uv_work_t, work_req);
