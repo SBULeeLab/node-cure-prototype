@@ -232,12 +232,13 @@ UV_DESTRUCTOR(static void cleanup(void)) {
   executors = NULL;
   n_executors = 0;
 
-  uv_mutex_destroy(&mutex);
-  uv_cond_destroy(&cond);
-
 	uv_log(1, "cleanup: cleaning up prio_executor\n");
 	if (uv__executor_join(&prio_executor))
 		abort();
+
+    /* Now all the workers are dead. */
+  uv_mutex_destroy(&mutex);
+  uv_cond_destroy(&cond);
 
 	uv_mutex_destroy(&prio_mutex);
 	uv_cond_destroy(&prio_cond);
@@ -595,9 +596,10 @@ int uv__executor_join (uv__executor_t *e) {
   uv_log(1, "uv__executor_join: Join'ing manager %lu\n", e->manager.tid);
   uv_thread_join(&e->manager.tid);
 
-  /* The hangman for the last worker has begun, but may not have completed.
+  /* There may be outstanding hangmen.
    * If we're not shutting down, that's OK.
-   * If we're shutting down, it doesn't matter anyway. */
+   * If we're shutting down, it doesn't matter anyway -- unless they're competing for a mutex we try to destroy!
+   * TODO We might want to wait for all of our hangmen to complete? If there's a problem, it has a very small window I think. */
 
 	return 0;
 }
