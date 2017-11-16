@@ -5600,11 +5600,12 @@ void PBKDF2(const FunctionCallbackInfo<Value>& args) {
 		}
     else
       args.GetReturnValue().Set(argv[1]);
-		timeout_watchdog->Unleash(req->threw_timeout_);
+    timeout_watchdog->Unleash(req->threw_timeout_);
   }
   return;
 
  err:
+  timeout_watchdog->Unleash(req == nullptr ? false: req->threw_timeout_);
   free(salt);
   free(pass);
   return env->ThrowTypeError(type_error);
