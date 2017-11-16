@@ -4905,6 +4905,7 @@ inline int Start(uv_loop_t* event_loop,
     CHECK_EQ(node_isolate, isolate);
     node_isolate = nullptr;
 		delete timeout_watchdog;
+        timeout_watchdog = nullptr;
   }
 
   isolate->Dispose();
