@@ -597,16 +597,21 @@ static void store_resources_in_timeout_buf (uv_fs_t *req) {
 		 * Start with inode number because it doesn't risk an fd leak, and might even time out early for us! */
 		uv_log(2, "store_resources_in_timeout_buf: req %p has path %s\n", req, req->timeout_buf->path);
 		rc = uv__fs_stat(req->timeout_buf->path, &statbuf);
-		if (rc < 0)
+		if (rc < 0) {
+            uv_log(2, "store_resources_in_timeout_buf: uv__fs_stat failed: path %s rc %d: %d %s\n", req->timeout_buf->path, rc, errno, strerror(errno));
 			goto CLEANUP_AND_RETURN;
+        }
 		ino = statbuf.st_ino;
+		uv_log(2, "store_resources_in_timeout_buf: ino %lu\n", ino);
 
 		/* First let's get the rph and inode number.
 		 * These can be done without risking an fd leak, and we expect stat cost to be a good predictor of open time.
 		 * Counterexample: open a fifo with O_RDONLY can hang. */
 		rc = uv__fs_realpath(req); /* WARNING Modifies req->ptr. */
-		if (rc != 0)
+		if (rc != 0) {
+            uv_log(2, "store_resources_in_timeout_buf: uv__fs_realpath failed: path %s rc %d: %d %s\n", req->timeout_buf->path, rc, errno, strerror(errno));
 			goto CLEANUP_AND_RETURN;
+        }
 		rph = hash_str(req->ptr);
 		resources_known = 1;
 	}
@@ -1162,16 +1167,19 @@ static ssize_t uv__fs_open(uv_fs_t* req) {
 				if (req->timeout_buf->ino == 0) {
 					uv_log(2, "uv__fs_open: created new file %s, looking up the resources\n", req->timeout_buf->path);
 					store_resources_in_timeout_buf(req); /* rph, ino */
-					if (!req->timeout_buf->resources_set)
-						abort();
 				}
-				/* Now we have enough to update the fd2resource table. */
-				req->timeout_buf->file = r;
-				uv_log(2, "uv__fs_open: %s, new fd2resource: %d -> <%lu, %u>\n", req->timeout_buf->path, req->timeout_buf->file, req->timeout_buf->ino, req->timeout_buf->rph);
+                if (req->timeout_buf->resources_set) {
+                    /* Now we have enough to update the fd2resource table. */
+                    req->timeout_buf->file = r;
+                    uv_log(2, "uv__fs_open: %s, new fd2resource: %d -> <%lu, %u>\n", req->timeout_buf->path, req->timeout_buf->file, req->timeout_buf->ino, req->timeout_buf->rph);
 
-				uv_mutex_lock(&fd2resource_lock);
-				fd2resource_add(req->timeout_buf->file, req->timeout_buf->ino, req->timeout_buf->rph);
-				uv_mutex_unlock(&fd2resource_lock);
+                    uv_mutex_lock(&fd2resource_lock);
+                    fd2resource_add(req->timeout_buf->file, req->timeout_buf->ino, req->timeout_buf->rph);
+                    uv_mutex_unlock(&fd2resource_lock);
+                }
+                else
+                    /* uv__fs_realpath gives ENOENT if you fclose(stdin) and then try to lookup /dev/stdin. Deep magic. */
+                    uv_log(2, "uv__fs_open: huh, open succeeded (%s, %d) but couldn't get resources. Oh well...\n", req->timeout_buf->path, r);
 			mark_cancelable();
 
       return r;
