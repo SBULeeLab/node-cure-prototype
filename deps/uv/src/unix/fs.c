@@ -557,6 +557,8 @@ static int req_has_path (uv_fs_t *req) {
  * Populates the resources fields of req->timeout_buf for reference:
  *   - on successful open, fd2resource_s
  *   - on timeout, to mark resources as slow
+ *
+ * req must not be modified by this function, except for req->timeout_buf
  */
 static void store_resources_in_timeout_buf (uv_fs_t *req) {
 	int rc;
@@ -565,6 +567,8 @@ static void store_resources_in_timeout_buf (uv_fs_t *req) {
 	unsigned rph = 0;
 	uv_file file = -1;
 	int resources_known = 0;
+
+    void *reqptr_orig = req->ptr;
 
   /* Should only happen once... */
   if (req->timeout_buf->resources_set)
@@ -580,7 +584,7 @@ static void store_resources_in_timeout_buf (uv_fs_t *req) {
 		if (fd2resource == NULL) {
             // the file was not found so we must have been passed an invalid file descriptor
             // this operation should be done after fd2 resource table to mark ourselves back to cancelable.
-            return;
+			goto CLEANUP_AND_RETURN;
         }
 
 		ino = fd2resource->ino;
@@ -594,15 +598,15 @@ static void store_resources_in_timeout_buf (uv_fs_t *req) {
 		uv_log(2, "store_resources_in_timeout_buf: req %p has path %s\n", req, req->timeout_buf->path);
 		rc = uv__fs_stat(req->timeout_buf->path, &statbuf);
 		if (rc < 0)
-			return;
+			goto CLEANUP_AND_RETURN;
 		ino = statbuf.st_ino;
 
 		/* First let's get the rph and inode number.
 		 * These can be done without risking an fd leak, and we expect stat cost to be a good predictor of open time.
 		 * Counterexample: open a fifo with O_RDONLY can hang. */
-		rc = uv__fs_realpath(req);
+		rc = uv__fs_realpath(req); /* WARNING Modifies req->ptr. */
 		if (rc != 0)
-			return;
+			goto CLEANUP_AND_RETURN;
 		rph = hash_str(req->ptr);
 		resources_known = 1;
 	}
@@ -617,6 +621,8 @@ static void store_resources_in_timeout_buf (uv_fs_t *req) {
 		mark_cancelable();
 	}
 
+CLEANUP_AND_RETURN:
+    req->ptr = reqptr_orig;
 	return;
 }
 
