@@ -2567,7 +2567,7 @@ static void TimeoutWatchdogStart(const FunctionCallbackInfo<Value>& args) {
 	}
 
 	int64_t async_id = args[0]->IntegerValue();
-	PrintErrorString("TimeoutWatchdogStart: async_id %lld\n", (long long) async_id);
+	node_log(2, "TimeoutWatchdogStart: async_id %lld\n", (long long) async_id);
 	timeout_watchdog->BeforeHook(async_id);
 }
 
@@ -2583,7 +2583,7 @@ static void TimeoutWatchdogStop(const FunctionCallbackInfo<Value>& args) {
 	}
 
 	int64_t async_id = args[0]->IntegerValue();
-	PrintErrorString("TimeoutWatchdogStop: async_id %lld\n", (long long) async_id);
+	node_log(2, "TimeoutWatchdogStop: async_id %lld\n", (long long) async_id);
 	timeout_watchdog->AfterHook(async_id);
 }
 

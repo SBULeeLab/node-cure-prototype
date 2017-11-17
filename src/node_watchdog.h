@@ -99,7 +99,7 @@ class Watchdog {
  */
 class TimeoutWatchdog { // TimeoutWatchdog (TW). Timeouts in ms granularity.
 	public:
-		TimeoutWatchdog(v8::Isolate *isolate, long timeout_ms);
+		TimeoutWatchdog(v8::Isolate *isolate, uint64_t timeout_ms);
 		~TimeoutWatchdog();
 
 		v8::Isolate* isolate() { return isolate_; }
@@ -144,13 +144,28 @@ class TimeoutWatchdog { // TimeoutWatchdog (TW). Timeouts in ms granularity.
 		 */
 		static void Run (void *arg);
 
+		static inline uint64_t NowMs(void) { return uv_hrtime() / 1000000; } /* 10e9 / 10e6 = 10e3 */
+
 	private:
+		/* Helpers for Event Loop. */
+		void _SignalWatchdog();
+
 		/* Helpers for TW thread. */
 
 		/**
 		 * Start a timer expiring in expiry_ms.
 		 */
 		void _StartTimer(uint64_t expiry_ms);
+
+		/**
+		 * Stop the current timer.
+		 */
+		void _StopTimer();
+
+		/**
+		 * Start a new timer epoch.
+		 */
+		void _StartEpoch(void);
 
 		/* Entrance points for TW thread. */
 
@@ -167,7 +182,7 @@ class TimeoutWatchdog { // TimeoutWatchdog (TW). Timeouts in ms granularity.
 		/* Class members. */
 
 		/* Constants. */
-		long timeout_ms_; // How long each BeforeHook has before we time it out.
+		uint64_t timeout_ms_; // How long each BeforeHook has before we time it out.
 		v8::Isolate *isolate_; // The associated isolate.
 		uv_thread_t thread_; // The TW thread.
 
@@ -187,13 +202,16 @@ class TimeoutWatchdog { // TimeoutWatchdog (TW). Timeouts in ms granularity.
 		/* Leash, Unleash. */
 		bool leashed_; // True if we shouldn't throw timeouts.
 		uint64_t time_at_leash_ms_;
-		long stack_num_at_leash_;
-		long stack_num_at_unleash_;
+		long stack_num_at_leash_; // Reset after handling the corresponding Unleash.
+		long stack_num_at_unleash_; // Reset after handling.
 		bool threw_while_leashed_;
 
 		/* _StartTimer. */
-		uint64_t timer_start_time_ms_; // Taken before we start the timer. So the next timer will expire no earlier than (timer_start_time + timeout_ms).
-		long stack_num_at_timer_start_;
+		uint64_t epoch_start_time_ms_; // The time at which we first started the
+		                               // current timer sequence for this stack_num_.
+		                               // i.e. this is the time at which we started a timer for timeout_ms_.
+																	 // On timer expiry we begin a new epoch.
+		long stack_num_at_epoch_start_;
 
 		/* ~TimeoutWatchdog. */
 		bool stopping_; // Signal TW to clean up.
