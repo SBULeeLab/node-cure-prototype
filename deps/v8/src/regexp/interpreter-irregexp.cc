@@ -185,7 +185,7 @@ static RegExpImpl::IrregexpResult RawMatch(Isolate* isolate,
 			// This is unsafe. Further up the stack is a DisallowHeapAllocation, see jsregexp.cc.
 			// That means that if there is a Timeout() or TerminateExecution() interrupt pending,
 			// HandleInterrupts() will try to allocate a (JSError, Message) and cause a failure in heap-inl.h when compiled with DEBUG.
-			dprintf(2, "RegExpImpl::IrregexpResult: Handling interrupts\n");
+			;//dprintf(2, "RegExpImpl::IrregexpResult: Handling interrupts\n");
 
 			since_interval_for_interrupts = 0;
 			Object* result = isolate->stack_guard()->HandleInterrupts();
@@ -203,10 +203,10 @@ static RegExpImpl::IrregexpResult RawMatch(Isolate* isolate,
 			if (0 < timeout && (unsigned) timeout < sinceStart) {
 				// Question: Can we allocate on heap outside of HandleInterrupts?
 				// Answer: Yes we can. In fact the issue only arises because of a DisallowHeapAllocation on the stack back in IrregexpInterpreter::Match.
-				dprintf(2, "RegExpImpl::IrregexpResult: Returning a timeout\n");
+				;//dprintf(2, "RegExpImpl::IrregexpResult: Returning a timeout\n");
 				return RegExpImpl::RE_TIMEOUT;
 
-				dprintf(2, "RegExpImpl::IrregexpResult: Requesting a timeout\n");
+				;//dprintf(2, "RegExpImpl::IrregexpResult: Requesting a timeout\n");
 				isolate->stack_guard()->RequestTimeout();
 				//return RegExpImpl::RE_TIMEOUT;
 			}

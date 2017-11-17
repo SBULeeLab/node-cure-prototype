@@ -953,7 +953,7 @@ Object* Isolate::StackOverflow() {
 }
 
 Object* Isolate::Timeout() {
-	dprintf(2, "Isolate::Timeout: Throwing and returning a NewTimeoutError\n");
+	;//dprintf(2, "Isolate::Timeout: Throwing and returning a NewTimeoutError\n");
 	return Throw(*(factory()->NewTimeoutError(MessageTemplate::kTimeoutError)), nullptr);
 }
 
@@ -1066,7 +1066,7 @@ Object* Isolate::Throw(Object* exception, MessageLocation* location) {
   HandleScope scope(this);
   Handle<Object> exception_handle(exception, this);
 
-	dprintf(2, "Isolate::Throw: exception->IsException %d\n", exception->IsException(this));
+	;//dprintf(2, "Isolate::Throw: exception->IsException %d\n", exception->IsException(this));
 
   if (FLAG_print_all_exceptions) {
     printf("=========================================================\n");
@@ -1164,7 +1164,7 @@ Object* Isolate::Throw(Object* exception, MessageLocation* location) {
   }
 
   // Set the exception being thrown.
-	dprintf(2, "Isolate::Throw: Setting exception\n");
+	;//dprintf(2, "Isolate::Throw: Setting exception\n");
   set_pending_exception(*exception_handle);
   return heap()->exception();
 }

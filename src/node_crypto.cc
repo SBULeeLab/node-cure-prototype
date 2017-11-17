@@ -5357,7 +5357,7 @@ void PBKDF2Request::Work(uv_work_t* work_req) {
 //           - don't return in After until the runaway thread is dead
 uint64_t PBKDF2Request::TimedOut(uv_work_t* work_req, void **dat) {
   PBKDF2Request* req = ContainerOf(&PBKDF2Request::work_req_, work_req);
-	dprintf(2, "PBKDF2Request::TimedOut: Timed out on work_req %p\n", work_req);
+	node_log(2, "PBKDF2Request::TimedOut: Timed out on work_req %p\n", work_req);
 	*dat = work_req->data; // post in Killed
 	req->threw_timeout_ = true;
 	return 0;
@@ -5400,7 +5400,7 @@ void PBKDF2Request::After(uv_work_t* work_req, int status) {
 	// We don't know what's happening in openssl, but it's not a syscall so it won't block forever.
 	// We wait for the thread running Work() to be killed and then we can safely abort.
 	if (status == -ETIMEDOUT) {
-		dprintf(2, "PBKDF2Request::After: ETIMEDOUT, waiting for Work() to die (semas %p)\n", semas);
+		node_log(2, "PBKDF2Request::After: ETIMEDOUT, waiting for Work() to die (semas %p)\n", semas);
 		uv_sem_wait(&semas->process);
 		// Now on timeout, the Work thread has been killed, so our memory is safe.
 		req->status_ = ETIMEDOUT;
@@ -5430,7 +5430,7 @@ void PBKDF2Request::After_sync2async(uv_work_t* work_req, int status) {
 	if (status == -ETIMEDOUT) {
 		CHECK(semas != NULL);
 
-		dprintf(2, "PBKDF2Request::After_sync2async: ETIMEDOUT, waiting for Work() to die (semas %p)\n", semas);
+		node_log(2, "PBKDF2Request::After_sync2async: ETIMEDOUT, waiting for Work() to die (semas %p)\n", semas);
 		uv_sem_wait(&semas->process);
 		// Now on timeout, the Work() thread has been killed, so our memory is safe.
 		req->status_ = ETIMEDOUT;
@@ -5439,14 +5439,14 @@ void PBKDF2Request::After_sync2async(uv_work_t* work_req, int status) {
 		CHECK_EQ(status, 0);
 
 	// Signal caller that we're done
-	dprintf(2, "PBKDF2Request::After_sync2async: Telling caller we're done\n");
+	node_log(2, "PBKDF2Request::After_sync2async: Telling caller we're done\n");
 	uv_sem_post(&semas->sync2async);
 	/* Caller is using semas, don't delete it. */
 	return;
 }
 
 void PBKDF2Request::Killed(void *dat) {
-	dprintf(2, "PBKDF2Request::Killed: Killed, post'ing\n"); 
+	node_log(2, "PBKDF2Request::Killed: Killed, post'ing\n");
 	crypto_semas_t *semas = (crypto_semas_t *) dat;
 	CHECK(semas != NULL);
 	uv_sem_post(&semas->process);
@@ -5581,7 +5581,7 @@ void PBKDF2(const FunctionCallbackInfo<Value>& args) {
 									PBKDF2Request::TimedOut,
                   PBKDF2Request::After_sync2async,
 									PBKDF2Request::Killed);
-		dprintf(2, "PBKDF2: Waiting for prio work to finish\n");
+		node_log(2, "PBKDF2: Waiting for prio work to finish\n");
 		uv_sem_wait(&semas->sync2async);
 
 		/* We are the last users of semas. */
@@ -5600,11 +5600,12 @@ void PBKDF2(const FunctionCallbackInfo<Value>& args) {
 		}
     else
       args.GetReturnValue().Set(argv[1]);
-		timeout_watchdog->Unleash(req->threw_timeout_);
+    timeout_watchdog->Unleash(req->threw_timeout_);
   }
   return;
 
  err:
+  timeout_watchdog->Unleash(req == nullptr ? false: req->threw_timeout_);
   free(salt);
   free(pass);
   return env->ThrowTypeError(type_error);
@@ -5712,7 +5713,7 @@ void RandomBytesWork(uv_work_t* work_req) {
 uint64_t RandomBytesTimedOut(uv_work_t* work_req, void **dat) {
   RandomBytesRequest* req =
       ContainerOf(&RandomBytesRequest::work_req_, work_req);
-	dprintf(2, "RandomBytesTimedOut: Timed out on work_req %p\n", work_req);
+	node_log(2, "RandomBytesTimedOut: Timed out on work_req %p\n", work_req);
 	*dat = work_req->data; // post in Killed
 	req->threw_timeout_ = true;
 	return 0;
@@ -5767,7 +5768,7 @@ void RandomBytesAfter(uv_work_t* work_req, int status) {
 	// We don't know what's happening in openssl, but it's not a syscall so it won't block forever.
 	// We wait for the thread running Work() to be killed and then we can safely abort.
 	if (status == -ETIMEDOUT) {
-		dprintf(2, "RandomBytesAfter: ETIMEDOUT, waiting for RandomBytesWork() to die (semas %p)\n", semas);
+		node_log(2, "RandomBytesAfter: ETIMEDOUT, waiting for RandomBytesWork() to die (semas %p)\n", semas);
 		uv_sem_wait(&semas->process);
 		// Now on timeout, the Work thread has been killed, so our memory is safe.
 		req->set_error(ETIMEDOUT);
@@ -5802,7 +5803,7 @@ void RandomBytesAfter_sync2async(uv_work_t* work_req, int status) {
 	if (status == -ETIMEDOUT) {
 		CHECK(semas != NULL);
 
-		dprintf(2, "RandomBytesAfter_sync2async: ETIMEDOUT, waiting for Work() to die (semas %p)\n", semas);
+		node_log(2, "RandomBytesAfter_sync2async: ETIMEDOUT, waiting for Work() to die (semas %p)\n", semas);
 		uv_sem_wait(&semas->process);
 
 		// Now on timeout, the Work() thread has been killed, so our memory is safe.
@@ -5812,14 +5813,14 @@ void RandomBytesAfter_sync2async(uv_work_t* work_req, int status) {
 		CHECK_EQ(status, 0);
 
 	// Signal caller that we're done
-	dprintf(2, "RandomBytesAfter_sync2async: Telling caller we're done\n");
+	node_log(2, "RandomBytesAfter_sync2async: Telling caller we're done\n");
 	uv_sem_post(&semas->sync2async);
 	/* Caller is using semas, don't delete it. */
 	return;
 }
 
 void RandomBytesKilled(void *dat) {
-	dprintf(2, "RandomBytesKilled: Killed, post'ing\n"); 
+	node_log(2, "RandomBytesKilled: Killed, post'ing\n");
 	crypto_semas_t *semas = (crypto_semas_t *) dat;
 	CHECK(semas != NULL);
 	uv_sem_post(&semas->process);
@@ -5838,7 +5839,6 @@ void RandomBytesAfterSync(Environment* env,
 
 
 void RandomBytes(const FunctionCallbackInfo<Value>& args) {
-	uint64_t remaining_ms = timeout_watchdog->Leash();
   Environment* env = Environment::GetCurrent(args);
 
   if (!args[0]->IsUint32()) {
@@ -5849,6 +5849,7 @@ void RandomBytes(const FunctionCallbackInfo<Value>& args) {
   if (size < 0 || size > Buffer::kMaxLength)
     return env->ThrowRangeError("size is not a valid Smi");
 
+  uint64_t remaining_ms = timeout_watchdog->Leash();
   Local<Object> obj = env->randombytes_constructor_template()->
       NewInstance(env->context()).ToLocalChecked();
   char* data = node::Malloc(size);
@@ -5894,7 +5895,7 @@ void RandomBytes(const FunctionCallbackInfo<Value>& args) {
 									RandomBytesTimedOut,
                   RandomBytesAfter_sync2async,
 									RandomBytesKilled);
-		dprintf(2, "RandomBytes: Waiting for prio work to finish\n");
+		node_log(2, "RandomBytes: Waiting for prio work to finish\n");
 		uv_sem_wait(&semas->sync2async);
 
 		/* We are the last users of semas. */
@@ -5974,7 +5975,7 @@ void RandomBytesBuffer(const FunctionCallbackInfo<Value>& args) {
 									RandomBytesTimedOut,
                   RandomBytesAfter_sync2async,
 									RandomBytesKilled);
-		dprintf(2, "RandomBytes: Waiting for prio work to finish\n");
+		node_log(2, "RandomBytes: Waiting for prio work to finish\n");
 		uv_sem_wait(&semas->sync2async);
 
 		/* We are the last users of semas. */

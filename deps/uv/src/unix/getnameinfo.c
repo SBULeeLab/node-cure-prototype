@@ -72,7 +72,7 @@ static uint64_t uv__getnameinfo_timed_out (struct uv__work* w, void **dat) {
 
   req = container_of(w, uv_getnameinfo_t, work_req);
 
-  dprintf(2, "uv__getnameinfo_timed_out: work %p dat %p timed out\n", w, dat);
+  uv_log(2, "uv__getnameinfo_timed_out: work %p dat %p timed out\n", w, dat);
 
 	/* Propagate to uv__getnameinfo_done. */
 	req->retcode = -ETIMEDOUT;
@@ -129,7 +129,7 @@ static void uv__getnameinfo_killed(void *dat) {
 	uv__getnameinfo_buf_t *buf = (uv__getnameinfo_buf_t *) dat;
 
 	/* Resource management: Free the buf. */
-	dprintf(2, "uv__getnameinfo_killed: Freeing %p\n", dat);
+	uv_log(2, "uv__getnameinfo_killed: Freeing %p\n", dat);
 	uv__free(buf);
 }
 
@@ -143,7 +143,7 @@ int uv_getnameinfo(uv_loop_t* loop,
                    uv_getnameinfo_cb getnameinfo_cb,
                    const struct sockaddr* addr,
                    int flags) {
-	dprintf(2, "uv_getaddrinfo: entry\n");
+	uv_log(2, "uv_getaddrinfo: entry\n");
 
   if (req == NULL || addr == NULL)
     return UV_EINVAL;

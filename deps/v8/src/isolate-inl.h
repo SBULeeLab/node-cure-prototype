@@ -32,7 +32,7 @@ Object* Isolate::pending_exception() {
 
 void Isolate::set_pending_exception(Object* exception_obj) {
   DCHECK(!exception_obj->IsException(this));
-//	dprintf(2, "Isolate::set_pending_exception: IsException %d\n", exception_obj->IsException(this));
+//	;//dprintf(2, "Isolate::set_pending_exception: IsException %d\n", exception_obj->IsException(this));
   thread_local_top_.pending_exception_ = exception_obj;
 }
 
@@ -45,7 +45,7 @@ void Isolate::clear_pending_exception() {
 
 bool Isolate::has_pending_exception() {
   DCHECK(!thread_local_top_.pending_exception_->IsException(this));
-//	dprintf(2, "Isolate::has_pending_exception: has_pending %d\n", !thread_local_top_.pending_exception_->IsTheHole(this));
+//	;//dprintf(2, "Isolate::has_pending_exception: has_pending %d\n", !thread_local_top_.pending_exception_->IsTheHole(this));
   return !thread_local_top_.pending_exception_->IsTheHole(this);
 }
 

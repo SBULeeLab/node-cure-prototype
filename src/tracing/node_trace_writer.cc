@@ -4,10 +4,12 @@
 #include <fcntl.h>
 
 #include "util.h"
+#include "node_watchdog.h"
+#include "node_internals.h"
 
 namespace node {
 namespace tracing {
-
+const uint64_t LARGE_TIMEOUT_MS = 9999999999l; 
 NodeTraceWriter::NodeTraceWriter(uv_loop_t* tracing_loop)
     : tracing_loop_(tracing_loop) {
   flush_signal_.data = this;
@@ -43,6 +45,7 @@ NodeTraceWriter::~NodeTraceWriter() {
   uv_fs_t req;
   int err;
   if (fd_ != -1) {
+    req.timeout = LARGE_TIMEOUT_MS;
     err = uv_fs_close(tracing_loop_, &req, fd_, nullptr);
     CHECK_EQ(err, 0);
     uv_fs_req_cleanup(&req);
@@ -57,6 +60,7 @@ NodeTraceWriter::~NodeTraceWriter() {
 void NodeTraceWriter::OpenNewFileForStreaming() {
   ++file_num_;
   uv_fs_t req;
+  req.timeout = LARGE_TIMEOUT_MS;
   std::ostringstream log_file;
   log_file << "node_trace." << file_num_ << ".log";
   fd_ = uv_fs_open(tracing_loop_, &req, log_file.str().c_str(),
@@ -155,7 +159,7 @@ void NodeTraceWriter::WriteToFile(std::string&& str, int highest_request_id) {
 
 void NodeTraceWriter::WriteCb(uv_fs_t* req) {
   WriteRequest* write_req = reinterpret_cast<WriteRequest*>(req);
-  CHECK_GE(write_req->req.result, 0);
+  CHECK_GE(write_req->req.result, 0); /* TODO Behavior on timeout? */
 
   NodeTraceWriter* writer = write_req->writer;
   int highest_request_id = write_req->highest_request_id;

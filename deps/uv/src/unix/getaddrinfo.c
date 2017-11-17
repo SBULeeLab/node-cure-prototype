@@ -122,7 +122,7 @@ static uint64_t uv__getaddrinfo_timed_out (struct uv__work* w, void **dat) {
 
   req = container_of(w, uv_getaddrinfo_t, work_req);
 
-  dprintf(2, "uv__getaddrinfo_timed_out: work %p dat %p timed out\n", w, dat);
+  uv_log(2, "uv__getaddrinfo_timed_out: work %p dat %p timed out\n", w, dat);
 
 	/* Propagate to uv__getaddrinfo_done. */
 	req->retcode = -ETIMEDOUT;
@@ -172,7 +172,7 @@ static void uv__getaddrinfo_killed(void *dat) {
 	uv__getaddrinfo_buf_t *buf = (uv__getaddrinfo_buf_t *) dat;
 
 	/* Resource management: Free the buf. */
-	dprintf(2, "uv__getaddrinfo_killed: Freeing %p\n", dat);
+	uv_log(2, "uv__getaddrinfo_killed: Freeing %p\n", dat);
 	uv__free(buf);
 }
 
@@ -186,7 +186,7 @@ int uv_getaddrinfo(uv_loop_t* loop,
   size_t hostname_len;
   size_t service_len;
 
-	dprintf(2, "uv_getaddrinfo: entry\n");
+	uv_log(2, "uv_getaddrinfo: entry\n");
 
   if (req == NULL || (hostname == NULL && service == NULL))
     return -EINVAL;
@@ -227,7 +227,8 @@ int uv_getaddrinfo(uv_loop_t* loop,
                     uv__getaddrinfo_killed);
     return 0;
   } else {
-		abort(); /* Node does not offer a synchronous API, make sure this never happens. */
+		// This is required to not abort from the test  node-cure/test/cctest/test_inspector_socket_server.cc 
+		//abort(); /* Node does not offer a synchronous API, make sure this never happens. */
     uv__getaddrinfo_work(&req->work_req);
     uv__getaddrinfo_done(&req->work_req, 0);
     return req->retcode;
