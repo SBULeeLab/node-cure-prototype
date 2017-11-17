@@ -87,10 +87,10 @@ class Watchdog {
  * State diagram:                   
  *                                AfterHook called from an async-hook
  *                               -------------------
- *      Executing startup JS     |                 |     Timer expires. Call Isolate::Timeout
+ *      Executing startup JS     |                 |            Timer expires. Call Isolate::Timeout
  *  init --------------------> idle --------> countdown ------------>  Timeout 
- *                                BeforeHook       \                |
- *                            called from an async-hook ----------------|
+ *                                BeforeHook           \            |
+ *                            called from an async-hook ------------|
  *                                                         Self-reset to continue aborting.
  *                                                         Ultimately, we can't protect a script that keeps ignoring
  *                                                         the errors we throw, e.g.
