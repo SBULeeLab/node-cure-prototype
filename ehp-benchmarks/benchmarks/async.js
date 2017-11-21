@@ -1,7 +1,9 @@
 const f = function(x){
-  if (x == 9999999){
+  if (x == 21){
     return;
   }
+
+  process.nextTick(() => f(x+1));
   process.nextTick(() => f(x+1));
 }
 f(0);
