@@ -22,7 +22,8 @@ mkdir results
 shopt -s nullglob
 for file in benchmarks/*.js
 do
-	resultfile="$(basename "${file}" .js)".result
+	
+  resultfile=results/"$(basename "${file}" .js)".result
 	echo "benchmarking ${file} see the results in ${resultfile}"
-	./bench.sh "${file}" > "${resultfile}"
+	./bench.sh "${file}" &> "${resultfile}"
 done
