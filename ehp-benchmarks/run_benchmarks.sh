@@ -7,13 +7,13 @@ git clone .. watchdog_node
 cd original_node
 git checkout "dc6bbb4"
 ./configure
-make -j 7
+make -j $(nproc)
 cd -
 
 cd watchdog_node
 git checkout NODECURE_SILENT
 ./configure
-make -j 7
+make -j $(nproc)
 cd -
 
 echo "created node projects, now to run benchmarks"
