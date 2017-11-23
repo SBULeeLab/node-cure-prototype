@@ -3,12 +3,12 @@ To setup for running the benchmarks you must first create simlinks to the follow
 
 nodes/node_watchdog/node - the executable that contains the modifications to node to implement the watchdog functionality.
 	The version with the watchdog changes can be created by cloning and checking out HEAD.
-		`$(git clone .. nodes/watchdog_node && cd nodes/watchdog_node  && ./configure && make -j $(nproc) && cd -)`
+		`$(git clone ../.. nodes/watchdog_node && cd nodes/watchdog_node  && ./configure && make -j $(nproc) && cd -)`
 
 
 nodes/original_node/node - the executable at the node commit dc6bbb44da before any node-cure commits were made.
 	The version with no watchdog changes can be created by cloning and checkign out commit dc6bbb44da.
-		`$(git clone .. nodes/original_node && cd nodes/original_node && git checkout "dc6bbb4" && ./configure && make -j $(nproc) && cd -)`
+		`$(git clone ../.. nodes/original_node && cd nodes/original_node && git checkout "dc6bbb4" && ./configure && make -j $(nproc) && cd -)`
 
 Once the executables have been created/linked the benchmarks are ready to be run.
 
