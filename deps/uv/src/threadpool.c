@@ -26,9 +26,8 @@
 #endif
 
 #include <stdlib.h>
-
+#include <stdbool.h>
 #define MAX_THREADPOOL_SIZE 128
-#define NODECURE_SILENT 1
 #include "threadpool-priv.h"
 
 #if 0
@@ -55,14 +54,19 @@ static char * _mylog_embed_prefix (int verbosity, char *buf, int len) {
 }
 
 void uv_log (int verbosity, const char *format, ... ){
-#ifndef NODECURE_SILENT
 	int rc;
 	static FILE *log_fp = NULL;
 	static uv_mutex_t log_mutex;
 	char buffer[512] = {0,};
 	va_list args;
-
+	static bool NODECURE_SILENT = false;
+	if (NODECURE_SILENT){
+	 return;
+	}
 	if (log_fp == NULL){
+		if ( (NODECURE_SILENT = (getenv("NODECURE_SILENT") != NULL)) ){
+			return;
+		}
 		log_fp = fopen("/tmp/uv.log","w");
 		if (!log_fp) abort();
 
@@ -81,7 +85,6 @@ void uv_log (int verbosity, const char *format, ... ){
 	va_end (args);
 
 	fflush(log_fp);
-#endif
 }
 #endif
 
