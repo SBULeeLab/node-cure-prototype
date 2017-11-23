@@ -1,13 +1,11 @@
 #!/bin/bash
 
 # setup the working directories
-$(git clone .. original_node && cd original_node && git checkout "dc6bbb4" && ./configure && make -j $(nproc) && cd -)
-$(git clone .. watchdog_node && cd watchdog_node && git checkout NODECURE_SILENT && ./configure && make -j $(nproc) && cd -)
 $(cd benchmarks && head -c 500M /dev/urandom >random_file)
 
 echo "created node projects, now to run benchmarks"
 
-mkdir results
+mkdir -p results
 shopt -s nullglob
 for file in benchmarks/*.js
 do
@@ -19,9 +17,9 @@ done
 
 
 
-echo "running benchmarks witha single cpu"
+echo "running benchmarks with a single cpu"
 
-mkdir results_single_cpu
+mkdir -p results_single_cpu
 shopt -s nullglob
 for file in benchmarks/*.js
 do
