@@ -16,6 +16,9 @@ Once the executables have been created/linked the benchmarks are ready to be run
 
 ####### Running Benchmarks ######
 
+#NOTE when running benchmarks the environment variable NODECURE_SILENT should be set to remove unnessesary overhead due to logging.
+
+
 The benchmarks can be run with the script `run_benchmarks.sh`.
 Once the benchmarks have completed running, the results will be stored in the result/<test_name>.result and the results_single_cpu/<test_name>.result.
 

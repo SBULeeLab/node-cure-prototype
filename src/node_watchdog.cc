@@ -23,7 +23,6 @@
 #include "node_internals.h"
 #include <algorithm>
 #include <stdarg.h>
-#define NODECURE_SILENT 1
 namespace node {
     static void mark_not_cancelable (void) {
         int old;
@@ -57,14 +56,20 @@ namespace node {
     }
 
     void node_log (int verbosity, const char *format, ... ){
-#ifndef NODECURE_SILENT
 	int rc;
         static FILE *log_fp = NULL;
         static uv_mutex_t log_mutex;
         char buffer[512] = {0,};
         va_list args;
+	static bool NODECURE_SILENT = false;
+	if (NODECURE_SILENT){
+		return;
+	}
 
         if (log_fp == NULL){
+	    if ( (NODECURE_SILENT = (getenv("NODECURE_SILENT") != NULL)) ){
+	     return;
+	    }
             log_fp = fopen("/tmp/node.log","w");
             if (!log_fp) abort();
 
@@ -85,7 +90,6 @@ namespace node {
         va_end (args);
 
         fflush(log_fp);
-#endif
     }
 
 
