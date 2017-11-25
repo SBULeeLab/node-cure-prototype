@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # setup the working directories
-$(cd benchmarks && head -c 500M /dev/urandom >random_file)
+$(cd benchmarks && head -c 100M /dev/urandom >random_file)
 
 echo "created node projects, now to run benchmarks"
 
