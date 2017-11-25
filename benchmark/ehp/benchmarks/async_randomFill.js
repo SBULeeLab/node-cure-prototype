@@ -2,7 +2,7 @@ const buf = Buffer.alloc(1);
 const crypto = require('crypto');
 
 
-let max_depth = 20;
+let max_depth = 18;
 if (process.argv.length > 2){
   max_depth = parseInt(process.argv[2],10);
 }
