@@ -1,0 +1,10 @@
+The benchmarks for koa are similar to express (koa was inspired by express).
+
+
+cd koa/benchmarks
+
+PATH=~/JamieProject/bm/benchmark/ehp/nodes/watchdog_node/:$PATH make
+
+
+
+PATH=~/JamieProject/bm/benchmark/ehp/nodes/original_node/:$PATH make
