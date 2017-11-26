@@ -13,3 +13,6 @@ echo $(cd express/benchmarks/ ; export CURRENT_NODE=~/JamieProject/bm/benchmark/
 echo "Original Node"
 echo $(cd express/benchmarks/ ; export CURRENT_NODE=~/JamieProject/bm/benchmark/ehp/nodes/original_node/node ; make)
 
+
+
+The numbers reported by the express benchmarks are the Requests/sec that wrk sees are satisfied with an amount of middleware layers.
