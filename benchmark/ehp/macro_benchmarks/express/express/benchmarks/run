@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 echo
-MW=$1 node $2 &
+MW=$1 ${CURRENT_NODE} $2 &
 pid=$!
 
 sleep 2
