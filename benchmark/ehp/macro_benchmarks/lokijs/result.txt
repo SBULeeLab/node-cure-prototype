@@ -1,0 +1,64 @@
+Original:
+Perf: Unindexed Inserts---------------------
+load (individual inserts) : 229.27ms (436166.96) ops/s (100000 documents)
+load (batch insert) : 61.74ms (1619695.50) ops/s (100000 documents)
+
+Perf: Indexed Inserts (Lazy) ------------------------
+load (individual inserts) : 255.68ms (391113.89) ops/s (100000 documents)
+load (batch insert) : 61.47ms (1626809.83) ops/s (100000 documents)
+
+Perf: Indexed Inserts (Adaptive) ------------------------
+load (individual inserts) : 467.45ms (213926.62) ops/s (100000 documents)
+load (batch insert) : 113.41ms (881756.46) ops/s (100000 documents)
+
+Perf: Unindexed finds ------------------------
+contiguous coll.find() : 2250.47ms (4443.52 ops/s) 10000 iterations
+interlaced inserts + coll.find() : 3388.94ms (2950.78 ops/s) 10000 iterations
+interlaced removes + coll.find() : 29.99ms (333444.48 ops/s) 10000 iterations
+interlaced updates + coll.find() : 2098.93ms (4764.33 ops/s) 10000 iterations
+
+Perf: Indexed finds (Nightmare Lazy Index Thrashing Test) ------
+contiguous coll.find() : 716.68ms (111625.83 ops/s) 80000 iterations
+interlaced inserts + coll.find() : 6793.94ms (441.57 ops/s) 3000 iterations
+interlaced removes + coll.find() : 3247.61ms (923.76 ops/s) 3000 iterations
+interlaced updates + coll.find() : 6559.03ms (457.38 ops/s) 3000 iterations
+
+Perf: Indexed finds (Nightmare Adaptive Index Thrashing Test) ---
+contiguous coll.find() : 157.97ms (506425.27 ops/s) 80000 iterations
+interlaced inserts + coll.find() : 79.33ms (126055.72 ops/s) 10000 iterations
+interlaced removes + coll.find() : 157.53ms (63479.97 ops/s) 10000 iterations
+interlaced updates + coll.find() : 184.58ms (54177.05 ops/s) 10000 iterations
+
+
+
+Watchdog:
+Perf: Unindexed Inserts---------------------
+load (individual inserts) : 180.85ms (552944.43) ops/s (100000 documents)
+load (batch insert) : 63.66ms (1570845.11) ops/s (100000 documents)
+
+Perf: Indexed Inserts (Lazy) ------------------------
+load (individual inserts) : 191.03ms (523477.99) ops/s (100000 documents)
+load (batch insert) : 61.54ms (1624959.38) ops/s (100000 documents)
+
+Perf: Indexed Inserts (Adaptive) ------------------------
+load (individual inserts) : 472.77ms (211519.34) ops/s (100000 documents)
+load (batch insert) : 112.90ms (885739.59) ops/s (100000 documents)
+
+Perf: Unindexed finds ------------------------
+contiguous coll.find() : 2091.79ms (4780.59 ops/s) 10000 iterations
+interlaced inserts + coll.find() : 3201.60ms (3123.44 ops/s) 10000 iterations
+interlaced removes + coll.find() : 32.72ms (305623.47 ops/s) 10000 iterations
+interlaced updates + coll.find() : 1938.46ms (5158.73 ops/s) 10000 iterations
+
+Perf: Indexed finds (Nightmare Lazy Index Thrashing Test) ------
+contiguous coll.find() : 729.84ms (109613.07 ops/s) 80000 iterations
+interlaced inserts + coll.find() : 6412.99ms (467.80 ops/s) 3000 iterations
+interlaced removes + coll.find() : 3047.48ms (984.42 ops/s) 3000 iterations
+interlaced updates + coll.find() : 6235.18ms (481.14 ops/s) 3000 iterations
+
+Perf: Indexed finds (Nightmare Adaptive Index Thrashing Test) ---
+contiguous coll.find() : 158.10ms (506008.86 ops/s) 80000 iterations
+interlaced inserts + coll.find() : 77.98ms (128238.01 ops/s) 10000 iterations
+interlaced removes + coll.find() : 158.08ms (63259.11 ops/s) 10000 iterations
+interlaced updates + coll.find() : 186.22ms (53699.92 ops/s) 10000 iterations
+
