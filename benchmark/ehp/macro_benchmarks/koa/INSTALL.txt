@@ -1,0 +1,8 @@
+get the repo..
+    git clone https://github.com/koajs/koa.git
+
+
+
+
+cd koa/
+npm install
