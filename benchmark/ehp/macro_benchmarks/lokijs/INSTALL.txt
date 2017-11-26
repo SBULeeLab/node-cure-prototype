@@ -1,0 +1,2 @@
+Clone lokijs from https://github.com/techfort/LokiJS
+    git clone https://github.com/techfort/LokiJS.git

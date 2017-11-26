@@ -1,0 +1,11 @@
+The Benchmarks are stored in LokiJS/benchmark/
+When doing benchmarking cd into that folder
+    cd LokiJS/benchmark/
+
+The following files should be benchmarked
+    node benchmark.js # benchmark the common operations that are performed
+
+    node benchmark_binary.js # benchmark the binary index
+
+These produce a lot of output and with my initial testing the difference between the silent watchdog and the original is negligible.
+To get multiple trials I would recommend only taking the ( %d ops/s) lines.
