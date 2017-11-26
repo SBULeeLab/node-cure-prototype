@@ -1,0 +1,11 @@
+The benchmarks are in node-restify/benchmark/.
+
+
+run the following command for a benchmark
+node node-restify/benchmark/index.js
+
+The program will first prompt for a few options:
+    I would leave all the options as the default except for "Do you want to compare HEAD with the stable release (undefined)?" which I would say No.
+
+
+Results for each test are stored in node-restify/benchmark/results
