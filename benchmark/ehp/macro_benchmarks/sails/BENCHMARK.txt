@@ -1,0 +1,11 @@
+To benchmark sails we are using mocha which lauches the first node in your path.
+
+This means between watchdog and original you should chnage the primary node in your path.
+
+
+PATH=~/JamieProject/bm/benchmark/ehp/nodes/watchdog_node/:$PATH BENCHMARK=true sails/node_modules/mocha/bin/mocha sails/test/benchmarks/
+
+
+
+
+PATH=~/JamieProject/bm/benchmark/ehp/nodes/original_node/:$PATH BENCHMARK=true sails/node_modules/mocha/bin/mocha sails/test/benchmarks/
