@@ -1,0 +1,71 @@
+
+
+  benchmarks
+    sails.load()
+      ✓ require("sails")
+      ✓ sails.load  [first time, no hooks] (156ms)
+      ✓ sails.load  [again, no hooks]
+      ✓ sails.load  [with moduleloader hook]
+      ✓ sails.load  [all core hooks] (165ms)
+      ✓ sails.load  [again, all core hooks]
+      ✓ sails.lift  [w/ a hot require cache]
+      ✓ sails.lift  [again, w/ a hot require cache]
+
+  benchmarks
+    sails requests :: 
+      generic requests ::
+        baseline (load only, no hooks) ::
+
+
+
+ • route_with_no_verb x 10,004 ops/sec ±0.82% (574 runs sampled) (avg 0.09995792543388272 ms)
+ • route_with_GET_verb x 9,862 ops/sec ±0.82% (572 runs sampled) (avg 0.1013980753670367 ms)
+ • route_with_POST_verb x 8,884 ops/sec ±0.82% (573 runs sampled) (avg 0.11255725775546932 ms)
+ • route_with_dynamic_param x 9,753 ops/sec ±0.69% (576 runs sampled) (avg 0.10253473667551492 ms)
+ • route_with_wildcard x 9,603 ops/sec ±0.66% (574 runs sampled) (avg 0.10413418458460585 ms)
+ • route_with_regex x 9,943 ops/sec ±0.79% (568 runs sampled) (avg 0.10057431432385613 ms)
+ • respond_with_string x 9,761 ops/sec ±0.95% (571 runs sampled) (avg 0.1024459390088993 ms)
+ • respond_with_json x 9,363 ops/sec ±0.89% (570 runs sampled) (avg 0.10680557772873266 ms)
+ • reflect_one_param x 9,080 ops/sec ±0.51% (570 runs sampled) (avg 0.11013599224886693 ms)
+ • reflect_all_params x 8,986 ops/sec ±0.78% (568 runs sampled) (avg 0.11128018979784797 ms)
+Fastest is route_with_no_verb,route_with_regex,route_with_GET_verb
+Slowest is route_with_POST_verb
+          ✓  (437965ms)
+        lift w/ no hooks besides http and request) ::
+
+
+
+ • route_with_no_verb x 1,486 ops/sec ±1.87% (564 runs sampled) (avg 0.6730954833413153 ms)
+ • route_with_GET_verb x 1,481 ops/sec ±1.93% (561 runs sampled) (avg 0.6751227533594666 ms)
+ • route_with_POST_verb x 1,273 ops/sec ±1.63% (568 runs sampled) (avg 0.7852480212394356 ms)
+ • route_with_dynamic_param x 1,523 ops/sec ±1.81% (568 runs sampled) (avg 0.6565519732878365 ms)
+ • route_with_wildcard x 1,634 ops/sec ±1.63% (570 runs sampled) (avg 0.6120175355280745 ms)
+ • route_with_regex x 1,442 ops/sec ±1.77% (569 runs sampled) (avg 0.6936151355074536 ms)
+ • respond_with_string x 1,457 ops/sec ±1.48% (572 runs sampled) (avg 0.6863256187299537 ms)
+ • respond_with_json x 1,334 ops/sec ±1.81% (563 runs sampled) (avg 0.7494712379912014 ms)
+ • reflect_one_param x 1,492 ops/sec ±1.95% (564 runs sampled) (avg 0.6703393999679271 ms)
+ • reflect_all_params x 1,468 ops/sec ±1.68% (570 runs sampled) (avg 0.6810267585126174 ms)
+Fastest is route_with_wildcard
+Slowest is route_with_POST_verb
+          ✓  (462928ms)
+        lift with all default hooks ::
+
+
+
+ • route_with_no_verb x 1,132 ops/sec ±1.89% (569 runs sampled) (avg 0.8830909418386761 ms)
+ • route_with_GET_verb x 1,200 ops/sec ±2.07% (570 runs sampled) (avg 0.8331616055118387 ms)
+ • route_with_POST_verb x 1,031 ops/sec ±2.38% (574 runs sampled) (avg 0.9701423277563302 ms)
+ • route_with_dynamic_param x 1,060 ops/sec ±2.99% (559 runs sampled) (avg 0.9437284997599757 ms)
+ • route_with_wildcard x 1,131 ops/sec ±3.24% (568 runs sampled) (avg 0.8841511473580362 ms)
+ • route_with_regex x 1,175 ops/sec ±3.51% (567 runs sampled) (avg 0.8509645242383046 ms)
+ • respond_with_string x 1,040 ops/sec ±3.75% (568 runs sampled) (avg 0.9615554671889625 ms)
+ • respond_with_json x 1,025 ops/sec ±4.04% (567 runs sampled) (avg 0.9760132350347538 ms)
+ • reflect_one_param x 1,112 ops/sec ±4.82% (565 runs sampled) (avg 0.8996416662117408 ms)
+ • reflect_all_params x 1,105 ops/sec ±5.00% (563 runs sampled) (avg 0.9051493081667562 ms)
+Fastest is route_with_GET_verb
+Slowest is respond_with_json,respond_with_string
+          ✓  (456307ms)
+
+
+  11 passing (23m)
+
