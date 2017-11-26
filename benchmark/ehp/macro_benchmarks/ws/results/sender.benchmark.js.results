@@ -1,0 +1,28 @@
+With Watchdog
+frame, unmasked (64 B) x 4,973,860 ops/sec ±0.22% (95 runs sampled)
+frame, masked (64 B) x 53,985 ops/sec ±0.82% (87 runs sampled)
+frame, unmasked (16 KiB) x 8,073,716 ops/sec ±0.32% (92 runs sampled)
+frame, masked (16 KiB) x 44,536 ops/sec ±1.54% (88 runs sampled)
+frame, unmasked (64 KiB) x 7,947,356 ops/sec ±0.19% (92 runs sampled)
+frame, masked (64 KiB) x 29,064 ops/sec ±1.46% (88 runs sampled)
+frame, unmasked (200 KiB) x 7,917,598 ops/sec ±0.31% (94 runs sampled)
+frame, masked (200 KiB) x 15,075 ops/sec ±1.21% (83 runs sampled)
+frame, unmasked (1 MiB) x 7,999,995 ops/sec ±0.26% (91 runs sampled)
+frame, masked (1 MiB) x 3,295 ops/sec ±2.73% (79 runs sampled)
+
+
+
+
+
+With original
+frame, unmasked (64 B) x 4,654,377 ops/sec ±1.48% (89 runs sampled)
+frame, masked (64 B) x 417,537 ops/sec ±1.79% (87 runs sampled)
+frame, unmasked (16 KiB) x 7,602,205 ops/sec ±1.98% (84 runs sampled)
+frame, masked (16 KiB) x 138,657 ops/sec ±0.49% (84 runs sampled)
+frame, unmasked (64 KiB) x 6,863,824 ops/sec ±0.99% (93 runs sampled)
+frame, masked (64 KiB) x 58,024 ops/sec ±2.04% (86 runs sampled)
+frame, unmasked (200 KiB) x 7,002,571 ops/sec ±0.20% (96 runs sampled)
+frame, masked (200 KiB) x 21,106 ops/sec ±0.53% (79 runs sampled)
+frame, unmasked (1 MiB) x 6,977,460 ops/sec ±0.26% (93 runs sampled)
+frame, masked (1 MiB) x 4,743 ops/sec ±0.82% (71 runs sampled)
+
