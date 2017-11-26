@@ -1,0 +1,18 @@
+The repository has been cloned from https://github.com/expressjs/express. And modified for easier benchmarking.
+
+The modified repository is in express/
+
+
+To install dependencies you should npm install in the express folder
+$(cd express && npm install)
+
+
+You also must install wrk to do the benchmarking.
+    sudo apt-get install build-essential libssl-dev
+    git clone https://github.com/wg/wrk.git wrk
+    cd wrk
+    make
+
+    Then place wrk into your path.
+
+Or install from the pavckage manager sudo apt-get install wrk.

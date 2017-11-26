@@ -1,0 +1,15 @@
+To benchmark set the environment variable CURRENT_NODE to the path of the node executable you want to benchmark.
+
+
+The benchmark is stored in express/benchmarks
+
+and can be run with `make`
+
+
+An Example of running them is
+
+echo "Watchdog Node"
+echo $(cd express/benchmarks/ ; export CURRENT_NODE=~/JamieProject/bm/benchmark/ehp/nodes/watchdog_node/node ; make)
+echo "Original Node"
+echo $(cd express/benchmarks/ ; export CURRENT_NODE=~/JamieProject/bm/benchmark/ehp/nodes/original_node/node ; make)
+
