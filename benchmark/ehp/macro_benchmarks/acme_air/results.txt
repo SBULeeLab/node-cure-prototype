@@ -1,0 +1,5 @@
+Watchdog:
+1279.8 requests/second
+
+Original:
+1344.9 requests/second

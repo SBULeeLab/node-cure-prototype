@@ -1,0 +1,15 @@
+First clone the acme-air repository
+	git clone https://github.com/acmeair/acmeair-nodejs.git
+
+Also clone the benchmarking driver:
+	git clone https://github.com/acmeair/acmeair-driver.git
+
+
+Building acme-air:
+	echo $(cd acmeair-nodejs ; npm install)
+
+Building the acmdair-driver:
+Follow the instructions here: https://github.com/acmeair/acmeair-driver/tree/master/acmeair-jmeter
+	download jmeter:
+		echo $(cd acmeair-driver ; wget http://apache.mirrors.hoobly.com//jmeter/binaries/apache-jmeter-3.3.tgz; tar -xvf apache-jmeter-3.3.tgz)
+		echo $(cd acmeair-driver ; ./gradlew build)
