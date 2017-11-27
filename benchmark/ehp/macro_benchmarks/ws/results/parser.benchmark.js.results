@@ -1,0 +1,21 @@
+With Watchdog
+ping frame (5 bytes payload) x 1,686,818 ops/sec ±0.47% (91 runs sampled)
+ping frame (no payload) x 16,457,079 ops/sec ±0.18% (95 runs sampled)
+close frame (no payload) x 12,362,038 ops/sec ±0.28% (90 runs sampled)
+text frame (20 bytes payload) x 1,192,412 ops/sec ±0.20% (94 runs sampled)
+binary frame (125 bytes payload) x 1,512,997 ops/sec ±0.18% (96 runs sampled)
+binary frame (65535 bytes payload) x 277,375 ops/sec ±0.20% (94 runs sampled)
+binary frame (200 KiB payload) x 98,785 ops/sec ±0.23% (95 runs sampled)
+binary frame (1 MiB payload) x 20,595 ops/sec ±0.24% (94 runs sampled)
+
+
+With original
+ping frame (5 bytes payload) x 1,775,204 ops/sec ±0.27% (93 runs sampled)
+ping frame (no payload) x 16,720,691 ops/sec ±0.19% (95 runs sampled)
+close frame (no payload) x 17,561,464 ops/sec ±0.49% (87 runs sampled)
+text frame (20 bytes payload) x 1,205,798 ops/sec ±0.25% (94 runs sampled)
+binary frame (125 bytes payload) x 1,508,424 ops/sec ±0.33% (94 runs sampled)
+binary frame (65535 bytes payload) x 278,074 ops/sec ±0.20% (94 runs sampled)
+binary frame (200 KiB payload) x 99,669 ops/sec ±0.26% (94 runs sampled)
+binary frame (1 MiB payload) x 20,633 ops/sec ±0.29% (91 runs sampled)
+

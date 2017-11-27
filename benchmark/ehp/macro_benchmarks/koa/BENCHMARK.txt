@@ -1,0 +1,13 @@
+The benchmarks for koa are similar to express (koa was inspired by express).
+
+
+cd koa/benchmarks
+
+PATH=~/JamieProject/bm/benchmark/ehp/nodes/watchdog_node/:$PATH make
+
+
+
+PATH=~/JamieProject/bm/benchmark/ehp/nodes/original_node/:$PATH make
+
+
+ The numbers reported by the koa benchmarks are the Requests/sec that wrk sees are satisfied with the given amount of middleware layers.

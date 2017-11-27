@@ -1,0 +1,6 @@
+
+The original for the repository needed resitify installed globally, so I have modified that to be able to more easily benchmark.
+
+To install the dependencies, run:
+
+echo $(cd node-restify ;npm install; make)

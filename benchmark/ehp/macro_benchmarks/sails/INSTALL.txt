@@ -1,0 +1,4 @@
+clone from
+    git clone https://github.com/balderdashy/sails.git
+
+cd sails; npm install

@@ -26,9 +26,8 @@
 #endif
 
 #include <stdlib.h>
-
+#include <stdbool.h>
 #define MAX_THREADPOOL_SIZE 128
-
 #include "threadpool-priv.h"
 
 #if 0
@@ -60,9 +59,14 @@ void uv_log (int verbosity, const char *format, ... ){
 	static uv_mutex_t log_mutex;
 	char buffer[512] = {0,};
 	va_list args;
-
+	static bool NODECURE_SILENT = false;
+	if (NODECURE_SILENT){
+	 return;
+	}
 	if (log_fp == NULL){
-		/* Init once */
+		if ( (NODECURE_SILENT = (getenv("NODECURE_SILENT") != NULL)) ){
+			return;
+		}
 		log_fp = fopen("/tmp/uv.log","w");
 		if (!log_fp) abort();
 

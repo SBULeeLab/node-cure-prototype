@@ -1,0 +1,16 @@
+The benchmarks are in the folder ws/bench
+
+
+These can be run from our current directory:
+
+    ../../nodes/watchdog_node/node ws/bench/speed.js
+    ../../nodes/original_node/node ws/bench/speed.js
+
+
+	../../nodes/watchdog_node/node ws/bench/parser.benchmark.js
+	../../nodes/original_node/node ws/bench/parser.benchmark.js
+
+
+
+    ../../nodes/watchdog_node/node ws/bench/sender.benchmark.js
+	../../nodes/original_node/node ws/bench/sender.benchmark.js
