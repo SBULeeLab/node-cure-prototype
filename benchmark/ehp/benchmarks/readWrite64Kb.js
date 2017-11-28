@@ -1,5 +1,5 @@
 const fs = require('fs');
-let iterationNumber = 30000;
+let iterationNumber = 3000;
 if (process.argv.length > 2){
   iterationNumber = parseInt(process.argv[2],10);
 }
