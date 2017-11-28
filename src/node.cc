@@ -4882,13 +4882,27 @@ inline int Start(uv_loop_t* event_loop,
     CHECK_EQ(node_isolate, nullptr);
     node_isolate = isolate;
 
-		CHECK_EQ(timeout_watchdog, nullptr);
-		char *env = getenv("NODECURE_NODE_TIMEOUT_MS");
-		long timeout_ms = 1000;
-		if (env != NULL)
-			timeout_ms = atol(env);
-		timeout_watchdog = new TimeoutWatchdog(node_isolate, timeout_ms);
-		CHECK_NE(timeout_watchdog, nullptr);
+    CHECK_EQ(timeout_watchdog, nullptr);
+    char *env = NULL;
+
+    /* Get timeout. */
+    env = getenv("NODECURE_NODE_TIMEOUT_MS");
+    long timeout_ms = 1000;
+    if (env != NULL)
+      timeout_ms = atol(env);
+    node_log(2, "%s: timeout_ms %ld\n", __func__, timeout_ms);
+
+    /* What type of TimeoutWatchdog? */
+    env = getenv("NODECURE_TIMEOUT_WATCHDOG_TYPE");
+    node_log(2, "%s: Creating a %s TimeoutWatchdog\n", __func__, env);
+    if (env == nullptr || strcmp(env, "precise") == 0)
+      timeout_watchdog = new PreciseTimeoutWatchdog(node_isolate, timeout_ms);
+    else if (strcmp(env, "lazy") == 0)
+      timeout_watchdog = new LazyTimeoutWatchdog(node_isolate, timeout_ms);
+    else
+      node_log(2, "%s: You must specify NODECURE_TIMEOUT_WATCHDOG_TYPE: precise (default) or lazy\n", __func__);
+
+    CHECK_NE(timeout_watchdog, nullptr);
   }
 
   int exit_code;
@@ -4903,9 +4917,9 @@ inline int Start(uv_loop_t* event_loop,
   {
     Mutex::ScopedLock scoped_lock(node_isolate_mutex);
     CHECK_EQ(node_isolate, isolate);
-    node_isolate = nullptr;
-		delete timeout_watchdog;
-        timeout_watchdog = nullptr;
+		node_isolate = nullptr;
+    delete timeout_watchdog;
+    timeout_watchdog = nullptr;
   }
 
   isolate->Dispose();

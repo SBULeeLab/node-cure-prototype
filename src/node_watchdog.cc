@@ -171,7 +171,18 @@ void Watchdog::Timer(uv_timer_t* timer) {
 }
 
 TimeoutWatchdog::TimeoutWatchdog(v8::Isolate* isolate, uint64_t timeout_ms)
-    : isolate_(isolate), timeout_ms_(timeout_ms), stopping_(false) {
+    : isolate_(isolate), timeout_ms_(timeout_ms) {
+  node_log(2, "%s: isolate_ %p timeout_ms_ %llu\n", __func__, isolate_, timeout_ms_);
+}
+
+TimeoutWatchdog::~TimeoutWatchdog() {
+  isolate_ = NULL;
+  timeout_ms_ = 0;
+}
+
+PreciseTimeoutWatchdog::PreciseTimeoutWatchdog(v8::Isolate* isolate, uint64_t timeout_ms)
+    : TimeoutWatchdog(isolate, timeout_ms),
+      stopping_(false) {
 
   int rc;
 
@@ -181,11 +192,11 @@ TimeoutWatchdog::TimeoutWatchdog(v8::Isolate* isolate, uint64_t timeout_ms)
   CHECK(loop_);
   rc = uv_loop_init(loop_); // NB uv_loop_init doesn't initialize a worker pool. It's on the first time you uv_queue_work.
   if (rc != 0) {
-    FatalError("node::TimeoutWatchdog::TimeoutWatchdog()",
+    FatalError("node::PreciseTimeoutWatchdog::PreciseTimeoutWatchdog()",
                "Failed to initialize uv loop.");
   }
 
-  rc = uv_async_init(loop_, &async_, &TimeoutWatchdog::Async);
+  rc = uv_async_init(loop_, &async_, &PreciseTimeoutWatchdog::Async);
   CHECK_EQ(0, rc);
 
   rc = uv_timer_init(loop_, &timer_);
@@ -214,29 +225,29 @@ TimeoutWatchdog::TimeoutWatchdog(v8::Isolate* isolate, uint64_t timeout_ms)
 	CHECK(rc == 0);
 
 	/* Lastly, start the inhabiting TW thread. */
-  rc = uv_thread_create(&thread_, &TimeoutWatchdog::Run, this);
+  rc = uv_thread_create(&thread_, &PreciseTimeoutWatchdog::Run, this);
   CHECK_EQ(0, rc);
 }
 
-TimeoutWatchdog::~TimeoutWatchdog() {
+PreciseTimeoutWatchdog::~PreciseTimeoutWatchdog() {
 	/* Clean up the TW thread. */
-  node_log(2, "TimeoutWatchdog::~TimeoutWatchdog: Cleaning up TW thread\n");
+  node_log(2, "PreciseTimeoutWatchdog::~PreciseTimeoutWatchdog: Cleaning up TW thread\n");
 
 	// Signal TW thread that we're done.
 	uv_mutex_lock(&lock_);
-		node_log(2, "TimeoutWatchdog::~TimeoutWatchdog: Signaling TW thread\n");
+		node_log(2, "PreciseTimeoutWatchdog::~PreciseTimeoutWatchdog: Signaling TW thread\n");
 		stopping_ = true; 
 		_SignalWatchdog();
 	uv_mutex_unlock(&lock_);
 
-	node_log(2, "TimeoutWatchdog::~TimeoutWatchdog: Waiting for TW thread to down the semaphore\n");
+	node_log(2, "PreciseTimeoutWatchdog::~PreciseTimeoutWatchdog: Waiting for TW thread to down the semaphore\n");
 	uv_sem_wait(&stopped_);
 
-  node_log(2, "TimeoutWatchdog::~TimeoutWatchdog: Joining thread\n");
+  node_log(2, "PreciseTimeoutWatchdog::~PreciseTimeoutWatchdog: Joining thread\n");
   uv_thread_join(&thread_);
 
   // UV_RUN_DEFAULT so that libuv has a chance to clean up.
-  node_log(2, "TimeoutWatchdog::~TimeoutWatchdog: Final uv_run for libuv cleanup\n");
+  node_log(2, "PreciseTimeoutWatchdog::~PreciseTimeoutWatchdog: Final uv_run for libuv cleanup\n");
   uv_run(loop_, UV_RUN_DEFAULT);
 
   int rc = uv_loop_close(loop_);
@@ -247,7 +258,7 @@ TimeoutWatchdog::~TimeoutWatchdog() {
 	uv_mutex_destroy(&lock_);
 }
 
-void TimeoutWatchdog::BeforeHook(long async_id) {
+void PreciseTimeoutWatchdog::BeforeHook(long async_id) {
 	uv_mutex_lock(&lock_);
 	CHECK(!stopping_);
 
@@ -260,7 +271,7 @@ void TimeoutWatchdog::BeforeHook(long async_id) {
 		// Signal wd thread: change in state.
 		stack_num_++;
 		time_at_stack_change_ms_ = NowMs();
-		node_log(2, "TimeoutWatchdog::BeforeHook: Signaling watchdog. was_empty, now stack_num_ %ld\n", stack_num_);
+		node_log(2, "PreciseTimeoutWatchdog::BeforeHook: Signaling watchdog. was_empty, now stack_num_ %ld\n", stack_num_);
 		_SignalWatchdog();
 	}
 
@@ -269,7 +280,7 @@ void TimeoutWatchdog::BeforeHook(long async_id) {
 	return;
 }
 
-void TimeoutWatchdog::AfterHook(long async_id) {
+void PreciseTimeoutWatchdog::AfterHook(long async_id) {
 	bool now_empty = false;
 
 	uv_mutex_lock(&lock_);
@@ -281,7 +292,7 @@ void TimeoutWatchdog::AfterHook(long async_id) {
 		/* TODO Domains have this effect. AfterHook but not BeforeHook is called.
 		 * Domains are deprecated so this is OK, devs may not have updated domains to play with async-hooks.
 		 * Make sure, however, that nobody else triggers this. */
-		node_log(2, "TimeoutWatchdog::AfterHook: Spurious, no pending async IDs. Bug in node's async-hooks code?\n");
+		node_log(2, "PreciseTimeoutWatchdog::AfterHook: Spurious, no pending async IDs. Bug in node's async-hooks code?\n");
 		CHECK(!pending_async_ids_.empty());
 		goto UNLOCK_AND_RETURN;
 	}
@@ -294,7 +305,7 @@ void TimeoutWatchdog::AfterHook(long async_id) {
 
 	if (now_empty) {
 		// Signal wd thread: change in state.
-		node_log(2, "TimeoutWatchdog::AfterHook: Signaling watchdog, now_empty\n");
+		node_log(2, "PreciseTimeoutWatchdog::AfterHook: Signaling watchdog, now_empty\n");
 		_SignalWatchdog();
 	}
 
@@ -303,8 +314,8 @@ UNLOCK_AND_RETURN:
 	return;
 }
 
-uint64_t TimeoutWatchdog::Leash (void) {
-	node_log(2, "TimeoutWatchdog::Leash: entry\n");
+uint64_t PreciseTimeoutWatchdog::Leash (void) {
+	node_log(2, "PreciseTimeoutWatchdog::Leash: entry\n");
 
 	uv_mutex_lock(&lock_);
 
@@ -312,28 +323,28 @@ uint64_t TimeoutWatchdog::Leash (void) {
 	leashed_ = true;
 
 	if (pending_async_ids_.empty()) {
-		node_log(2, "TimeoutWatchdog::Leash: startup code, not in an async region\n");
+		node_log(2, "PreciseTimeoutWatchdog::Leash: startup code, not in an async region\n");
 		uv_mutex_unlock(&lock_);
-		return timeout_ms_;
+		return timeout_ms();
 	}
 
 	time_at_leash_ms_ = NowMs();
 	stack_num_at_leash_ = stack_num_;
-	node_log(2, "TimeoutWatchdog::Leash: Signaling watchdog, stack_num_at_leash_ %ld\n", stack_num_at_leash_);
+	node_log(2, "PreciseTimeoutWatchdog::Leash: Signaling watchdog, stack_num_at_leash_ %ld\n", stack_num_at_leash_);
 	_SignalWatchdog(); // Signal leash change.
 
 	uv_mutex_unlock(&lock_);
 
   /* Figure out how long the timer had left. */
 	uint64_t since_start_ms = time_at_leash_ms_ - epoch_start_time_ms_;
-	uint64_t remaining_ms = (timeout_ms_ < since_start_ms) ? 0 : timeout_ms_ - since_start_ms;
+	uint64_t remaining_ms = (timeout_ms() < since_start_ms) ? 0 : timeout_ms() - since_start_ms;
 
-	node_log(2, "TimeoutWatchdog::Leash: Leashed with %lu remaining\n", remaining_ms);
+	node_log(2, "PreciseTimeoutWatchdog::Leash: Leashed with %lu remaining\n", remaining_ms);
 	return remaining_ms;
 }
 
-void TimeoutWatchdog::Unleash (bool threw) {
-	node_log(2, "TimeoutWatchdog::Unleash: entry\n");
+void PreciseTimeoutWatchdog::Unleash (bool threw) {
+	node_log(2, "PreciseTimeoutWatchdog::Unleash: entry\n");
 
 	uv_mutex_lock(&lock_);
 
@@ -341,7 +352,7 @@ void TimeoutWatchdog::Unleash (bool threw) {
 	leashed_ = false;
 
 	if (pending_async_ids_.empty()) {
-		node_log(2, "TimeoutWatchdog::Unleash: startup code, not in an async region\n");
+		node_log(2, "PreciseTimeoutWatchdog::Unleash: startup code, not in an async region\n");
 		uv_mutex_unlock(&lock_);
 		return;
 	}
@@ -349,7 +360,7 @@ void TimeoutWatchdog::Unleash (bool threw) {
 	threw_while_leashed_ = threw;
 	stack_num_at_unleash_ = stack_num_;
 	CHECK(stack_num_at_leash_ == stack_num_at_unleash_);
-	node_log(2, "TimeoutWatchdog::Unleash: Signaling watchdog, threw_while_leashed %d stack_num_at_unleash_ %ld\n", threw, stack_num_at_unleash_);
+	node_log(2, "PreciseTimeoutWatchdog::Unleash: Signaling watchdog, threw_while_leashed %d stack_num_at_unleash_ %ld\n", threw, stack_num_at_unleash_);
 
 	_SignalWatchdog(); /* Signal leash change. */
 
@@ -358,12 +369,12 @@ void TimeoutWatchdog::Unleash (bool threw) {
 	return;
 }
 
-void TimeoutWatchdog::Run(void* arg) {
-  TimeoutWatchdog* wd = static_cast<TimeoutWatchdog*>(arg);
+void PreciseTimeoutWatchdog::Run(void* arg) {
+  PreciseTimeoutWatchdog* wd = static_cast<PreciseTimeoutWatchdog*>(arg);
 
-	node_log(2, "TimeoutWatchdog::Run: Calling uv_run\n");
-  uv_run(wd->loop_, UV_RUN_DEFAULT); // Run until we call uv_stop due to signal from TimeoutWatchdog::~TimeoutWatchdog.
-	node_log(2, "TimeoutWatchdog::Run: returning\n");
+	node_log(2, "PreciseTimeoutWatchdog::Run: Calling uv_run\n");
+  uv_run(wd->loop_, UV_RUN_DEFAULT); // Run until we call uv_stop due to signal from PreciseTimeoutWatchdog::~PreciseTimeoutWatchdog.
+	node_log(2, "PreciseTimeoutWatchdog::Run: returning\n");
 }
 
 /**
@@ -372,10 +383,10 @@ void TimeoutWatchdog::Run(void* arg) {
  * Since uv_async_send can be coalesced, we can't assume anything about the state now.
  * Must reason from our state variables.
  */
-void TimeoutWatchdog::Async(uv_async_t* async) {
-  TimeoutWatchdog *w = ContainerOf(&TimeoutWatchdog::async_, async);
+void PreciseTimeoutWatchdog::Async(uv_async_t* async) {
+  PreciseTimeoutWatchdog *w = ContainerOf(&PreciseTimeoutWatchdog::async_, async);
 
-  node_log(2, "TimeoutWatchdog::Async: entry\n");
+  node_log(2, "PreciseTimeoutWatchdog::Async: entry\n");
 	uv_mutex_lock(&w->lock_);
 
 	CHECK(w->async_pending_);
@@ -387,7 +398,7 @@ void TimeoutWatchdog::Async(uv_async_t* async) {
 
 	// 1. If we're stopping, bail.
 	if (w->stopping_) {
-		node_log(2, "TimeoutWatchdog::Async: stopping_, cleaning up and calling uv_stop\n");
+		node_log(2, "PreciseTimeoutWatchdog::Async: stopping_, cleaning up and calling uv_stop\n");
 
 		w->_StopTimer();
 
@@ -402,14 +413,14 @@ void TimeoutWatchdog::Async(uv_async_t* async) {
 
 	// 2. If there's no stack, nothing to do.
 	if (!any_async_ids) {
-		node_log(2, "TimeoutWatchdog::Async: no stack, no need for a timer\n");
+		node_log(2, "PreciseTimeoutWatchdog::Async: no stack, no need for a timer\n");
 		w->_StopTimer();
 		goto UNLOCK_AND_RETURN;
 	}
 
 	// 3. If we're leashed, clear the current timer (if any). Unleash is checked below.
 	if (w->leashed_) {
-		node_log(2, "TimeoutWatchdog::Async: leashed, clearing the timer. We'll pick it up again at Unleash.\n");
+		node_log(2, "PreciseTimeoutWatchdog::Async: leashed, clearing the timer. We'll pick it up again at Unleash.\n");
 		w->_StopTimer();
 		goto UNLOCK_AND_RETURN;
 	}
@@ -421,12 +432,12 @@ void TimeoutWatchdog::Async(uv_async_t* async) {
 	// We can't just restart a timer from timeout_ms_ because of something like this:
 	//   `while(1) { fs.readFileSync('/tmp/x'); }`.
 	// We have to account for the time used up in the Leashed region.
-	node_log(2, "TimeoutWatchdog::Async: not stopping_, there are async_ids, and not leashed. stack_num_ %ld stack_num_at_epoch_start_ %ld stack_num_at_leash_ %ld stack_num_at_unleash_ %ld\n", w->stack_num_, w->stack_num_at_epoch_start_, w->stack_num_at_leash_, w->stack_num_at_unleash_);
+	node_log(2, "PreciseTimeoutWatchdog::Async: not stopping_, there are async_ids, and not leashed. stack_num_ %ld stack_num_at_epoch_start_ %ld stack_num_at_leash_ %ld stack_num_at_unleash_ %ld\n", w->stack_num_, w->stack_num_at_epoch_start_, w->stack_num_at_leash_, w->stack_num_at_unleash_);
 
 	// 4. If the stack has changed since we last started a timer, our current timer is invalid and we should start anew.
 	CHECK(w->stack_num_at_epoch_start_ <= w->stack_num_);
 	if (w->stack_num_at_epoch_start_ < w->stack_num_) {
-		node_log(2, "TimeoutWatchdog::Async: stack has changed, starting a timer epoch\n");
+		node_log(2, "PreciseTimeoutWatchdog::Async: stack has changed, starting a timer epoch\n");
 		w->_StartEpoch();
 		goto UNLOCK_AND_RETURN;
 	}
@@ -435,28 +446,28 @@ void TimeoutWatchdog::Async(uv_async_t* async) {
 	CHECK(w->stack_num_at_leash_ == w->stack_num_at_unleash_);
 	if (w->stack_num_at_epoch_start_ == w->stack_num_at_unleash_) {
 		/* Acknowledge the Unleash, and reset leash/unleash state. */ 
-		node_log(2, "TimeoutWatchdog::Async: Handling a pending Unleash\n");
+		node_log(2, "PreciseTimeoutWatchdog::Async: Handling a pending Unleash\n");
 		w->stack_num_at_leash_ = -1;
 		w->stack_num_at_unleash_ = -1;
 
 		if (w->threw_while_leashed_) {
-			node_log(2, "TimeoutWatchdog::Async: There was an Unleash, but we threw while leashed. Starting a fresh timer epoch\n");
+			node_log(2, "PreciseTimeoutWatchdog::Async: There was an Unleash, but we threw while leashed. Starting a fresh timer epoch\n");
 			w->_StartEpoch();
 			goto UNLOCK_AND_RETURN;
 		}
 		else {
-			node_log(2, "TimeoutWatchdog::Async: There was an Unleash, but it did not throw. Checking timer status\n");
+			node_log(2, "PreciseTimeoutWatchdog::Async: There was an Unleash, but it did not throw. Checking timer status\n");
 			since_ms = w->NowMs() - w->epoch_start_time_ms_;
-			if (w->timeout_ms_ < since_ms) {
-				node_log(2, "TimeoutWatchdog::Async: We should timeout now!\n");
+			if (w->timeout_ms() < since_ms) {
+				node_log(2, "PreciseTimeoutWatchdog::Async: We should timeout now!\n");
 				// TIMEOUT
 				w->isolate()->Timeout(); // TODO Is it safe to call Timeout if the previous Timeout interrupt has been handled but the Timeout it threw hasn't cleared yet? Need to modify V8-land? Will this ever happen with a "reasonable" timeout_ms_?
-				remaining_ms = w->timeout_ms_; // Guard timeout handler.
+				remaining_ms = w->timeout_ms(); // Watch the timeout handler.
 				w->_StartEpoch();
 			}
 			else {
-				remaining_ms = w->timeout_ms_ - since_ms;
-				node_log(2, "TimeoutWatchdog::Async: We still have %llu ms, resuming timer\n", remaining_ms);
+				remaining_ms = w->timeout_ms() - since_ms;
+				node_log(2, "PreciseTimeoutWatchdog::Async: We still have %llu ms, resuming timer\n", remaining_ms);
 				w->_StartTimer(remaining_ms);
 			}
 
@@ -464,7 +475,7 @@ void TimeoutWatchdog::Async(uv_async_t* async) {
 		}
 	}
 
-	node_log(2, "TimeoutWatchdog::Async: Guess I have nothing to do -- e.g. A new stack began but nothing interesting happened\n");
+	node_log(2, "PreciseTimeoutWatchdog::Async: Guess I have nothing to do -- e.g. A new stack began but nothing interesting happened\n");
 
 UNLOCK_AND_RETURN:
 	uv_mutex_unlock(&w->lock_);
@@ -472,8 +483,8 @@ UNLOCK_AND_RETURN:
 }
 
 /* Caller should hold lock_. */
-void TimeoutWatchdog::_SignalWatchdog() {
-	node_log(2, "TimeoutWatchdog::_SignalWatchdog: Signaling\n");
+void PreciseTimeoutWatchdog::_SignalWatchdog() {
+	node_log(2, "PreciseTimeoutWatchdog::_SignalWatchdog: Signaling\n");
 
 	if (async_pending_)
 		return;
@@ -483,19 +494,19 @@ void TimeoutWatchdog::_SignalWatchdog() {
 }
 
 /* Caller should hold lock_. */
-void TimeoutWatchdog::_StartEpoch() {
+void PreciseTimeoutWatchdog::_StartEpoch() {
 
 	epoch_start_time_ms_ = NowMs();
 	stack_num_at_epoch_start_ = stack_num_;
-	node_log(2, "TimeoutWatchdog::_StartEpoch: epoch_start_time_ms_ %llu stack_num_at_epoch_start_ %ld\n", epoch_start_time_ms_, stack_num_at_epoch_start_);
+	node_log(2, "PreciseTimeoutWatchdog::_StartEpoch: epoch_start_time_ms_ %llu stack_num_at_epoch_start_ %ld\n", epoch_start_time_ms_, stack_num_at_epoch_start_);
 
-	_StartTimer(timeout_ms_);
+	_StartTimer(timeout_ms());
 }
 
 /* Caller should hold lock_. */
-void TimeoutWatchdog::_StartTimer(uint64_t expiry_ms) {
+void PreciseTimeoutWatchdog::_StartTimer(uint64_t expiry_ms) {
 	uint64_t now_ms = NowMs();
-	node_log(2, "TimeoutWatchdog::_StartTimer: entry at %lu, expiry_ms %lu\n", now_ms, expiry_ms);
+	node_log(2, "PreciseTimeoutWatchdog::_StartTimer: entry at %lu, expiry_ms %lu\n", now_ms, expiry_ms);
 
 	CHECK(!pending_async_ids_.empty());
 	CHECK(stack_num_ != -1);
@@ -503,48 +514,48 @@ void TimeoutWatchdog::_StartTimer(uint64_t expiry_ms) {
 
 	_StopTimer(); // Make sure it's stopped. Now sure what happens if I start a started timer, but this is cheap since we only have one timer in our uv timer heap.
 	uint64_t repeat = 0; // Don't repeat; libuv's timers go off at timeout_ms_ intervals accounting for time shaving. We restart with full timeout ourselves.
-	int rc = uv_timer_start(&timer_, &TimeoutWatchdog::Timer, expiry_ms, repeat);
+	int rc = uv_timer_start(&timer_, &PreciseTimeoutWatchdog::Timer, expiry_ms, repeat);
 	CHECK_EQ(0, rc);
 
 	return;
 }
 
 /* Caller should hold lock_. */
-void TimeoutWatchdog::_StopTimer() {
+void PreciseTimeoutWatchdog::_StopTimer() {
 	int rc;
 
-	node_log(2, "TimeoutWatchdog::_StopTimer: Stopping timer\n");
+	node_log(2, "PreciseTimeoutWatchdog::_StopTimer: Stopping timer\n");
 
 	rc = uv_timer_stop(&timer_); // This is idempotent. If timer is not active, nothing happens.
 	CHECK(rc == 0);
 }
 
-void TimeoutWatchdog::Timer(uv_timer_t* timer) {
-  TimeoutWatchdog* w = ContainerOf(&TimeoutWatchdog::timer_, timer);
+void PreciseTimeoutWatchdog::Timer(uv_timer_t* timer) {
+  PreciseTimeoutWatchdog* w = ContainerOf(&PreciseTimeoutWatchdog::timer_, timer);
 
 	uint64_t now_ms = w->NowMs();
 	bool should_throw = false;
 
-  node_log(2, "TimeoutWatchdog::Timer: entry at %llu\n", now_ms);
+  node_log(2, "PreciseTimeoutWatchdog::Timer: entry at %llu\n", now_ms);
 	uv_mutex_lock(&w->lock_);
 
 	/* Reasons not to throw a timeout. */
 
 	// 1. We should stop.
 	if (w->stopping_) {
-		node_log(2, "TimeoutWatchdog::Timer: stopping_, returning early\n");
+		node_log(2, "PreciseTimeoutWatchdog::Timer: stopping_, returning early\n");
 		goto UNLOCK_AND_RETURN;
 	}
 
 	// 2. The loop has moved on, and Async hasn't had a chance to go yet. */
 	if (w->stack_num_at_epoch_start_ != w->stack_num_) {
-		node_log(2, "TimeoutWatchdog::Timer: timer is for an old async id, returning early\n");
+		node_log(2, "PreciseTimeoutWatchdog::Timer: timer is for an old async id, returning early\n");
 		goto UNLOCK_AND_RETURN;
 	}
 
 	// 3. We never throw while leashed.
 	if (w->leashed_) {
-		node_log(2, "TimeoutWatchdog::Timer: leashed_, returning early\n");
+		node_log(2, "PreciseTimeoutWatchdog::Timer: leashed_, returning early\n");
 		goto UNLOCK_AND_RETURN;
 	}
 
@@ -555,23 +566,31 @@ void TimeoutWatchdog::Timer(uv_timer_t* timer) {
 	if (w->stack_num_at_unleash_ == w->stack_num_ &&
 		  w->epoch_start_time_ms_ < w->time_at_leash_ms_ &&
 			w->threw_while_leashed_) {
-		node_log(2, "TimeoutWatchdog::Timer:: Timer predates most recent leash and that leash threw. Restarting the timer.\n");
+		node_log(2, "PreciseTimeoutWatchdog::Timer:: Timer predates most recent leash and that leash threw. Restarting the timer.\n");
 		should_throw = false;
 	}
 
 	if (should_throw) {
 		/* No more reasons, so we'll throw. */
-		node_log(2, "TimeoutWatchdog::Timer: Throwing a timeout\n");
+		node_log(2, "PreciseTimeoutWatchdog::Timer: Throwing a timeout\n");
 		w->isolate()->Timeout(); // TODO Is it safe to call Timeout if the previous Timeout interrupt has been handled but the Timeout it threw hasn't cleared yet? Need to modify V8-land? Will this ever happen with a "reasonable" timeout_ms_?
 	}
 
-	node_log(2, "TimeoutWatchdog::Timer: Starting a new timer epoch in case of a bad exception handler.\n");
+	node_log(2, "PreciseTimeoutWatchdog::Timer: Starting a new timer epoch in case of a bad exception handler.\n");
 	w->_StartEpoch();
 
 UNLOCK_AND_RETURN:
-  node_log(2, "TimeoutWatchdog::Timer: return\n");
+  node_log(2, "PreciseTimeoutWatchdog::Timer: return\n");
 	uv_mutex_unlock(&w->lock_);
 	return;
+}
+
+LazyTimeoutWatchdog::LazyTimeoutWatchdog(v8::Isolate *isolate, uint64_t timeout_ms) 
+  : TimeoutWatchdog(isolate, timeout_ms)
+  {
+}
+
+LazyTimeoutWatchdog::~LazyTimeoutWatchdog() {
 }
 
 SigintWatchdog::SigintWatchdog(
