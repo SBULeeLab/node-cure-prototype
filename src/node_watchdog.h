@@ -148,6 +148,7 @@ class TimeoutWatchdog { // TimeoutWatchdog (TW). Timeouts in ms granularity.
 
 	private:
 		/* Helpers for Event Loop. */
+
 		void _SignalWatchdog();
 
 		/* Helpers for TW thread. */
@@ -198,6 +199,7 @@ class TimeoutWatchdog { // TimeoutWatchdog (TW). Timeouts in ms granularity.
 		std::stack<long> pending_async_ids_; // Nested async hooks are called in a stack.
 		long stack_num_; // Number of stacks we have seen -- when stack goes from empty to non-empty, +1.
 		uint64_t time_at_stack_change_ms_;
+		bool async_pending_; // Don't uv_async_send if one is already pending.
 
 		/* Leash, Unleash. */
 		bool leashed_; // True if we shouldn't throw timeouts.

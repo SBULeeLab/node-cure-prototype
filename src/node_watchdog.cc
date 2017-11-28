@@ -200,6 +200,7 @@ TimeoutWatchdog::TimeoutWatchdog(v8::Isolate* isolate, uint64_t timeout_ms)
 
 	leashed_ = false;
 	time_at_leash_ms_ = 0;
+	async_pending_ = false;
 	stack_num_at_leash_ = -1;
 	stack_num_at_unleash_ = -1;
 	threw_while_leashed_ = false;
@@ -377,6 +378,9 @@ void TimeoutWatchdog::Async(uv_async_t* async) {
   node_log(2, "TimeoutWatchdog::Async: entry\n");
 	uv_mutex_lock(&w->lock_);
 
+	CHECK(w->async_pending_);
+	w->async_pending_ = false;
+
 	bool any_async_ids = !w->pending_async_ids_.empty();
 	uint64_t since_ms;
 	uint64_t remaining_ms;
@@ -467,9 +471,15 @@ UNLOCK_AND_RETURN:
 	return;
 }
 
+/* Caller should hold lock_. */
 void TimeoutWatchdog::_SignalWatchdog() {
 	node_log(2, "TimeoutWatchdog::_SignalWatchdog: Signaling\n");
-  uv_async_send(&async_);
+
+	if (async_pending_)
+		return;
+
+	uv_async_send(&async_);
+	async_pending_ = true;
 }
 
 /* Caller should hold lock_. */
