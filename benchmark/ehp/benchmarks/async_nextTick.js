@@ -1,4 +1,4 @@
-let max_depth = 21;
+let max_depth = 19;
 if (process.argv.length > 2){
   max_depth = parseInt(process.argv[2],10);
 }
