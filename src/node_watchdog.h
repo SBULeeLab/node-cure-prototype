@@ -239,17 +239,75 @@ class LazyTimeoutWatchdog : public TimeoutWatchdog {
   ~LazyTimeoutWatchdog();
   /* Event loop APIs. */
 
-  void BeforeHook (long async_id) {};
-  void AfterHook (long async_id) {};
+  void BeforeHook (long async_id);
+  void AfterHook (long async_id);
 
-  uint64_t Leash (void) { return 0; };
-  void Unleash (bool threw) {};
+  uint64_t Leash (void);
+  void Unleash (bool threw);
 
   /* TW thread APIs. */
 
-  static void Run (void *arg) {};
+  static void Run (void *arg);
 
  private:
+  /* Helpers for Event Loop. */
+
+  void _SignalWatchdog();
+
+  /* Helpers for TW thread. */
+
+  /**
+   * Start a timer expiring in expiry_ms.
+   */
+  void _StartTimer(uint64_t expiry_ms);
+
+  /**
+   * Stop the current timer.
+   */
+  void _StopTimer();
+
+  /**
+   * Start a new timer epoch.
+   */
+  void _StartEpoch(void);
+
+  /* Entrance points for TW thread. */
+
+  /**
+   * Communication from the outside world.
+   */
+  static void Async(uv_async_t* async);
+
+  /**
+   * A timeout expired.
+   */
+  static void Timer(uv_timer_t* timer);
+
+  /* Class members. */
+
+  /* Constants. */
+  uv_thread_t thread_; // The TW thread.
+
+  /* Managing the TW thread. */
+  uv_loop_t *loop_;  // TW thread uses a uv_loop_t to manage an async (for async-hook communication) and a timer (for timeouts).
+  uv_async_t async_; // uv_async_send when: (1) the async_ids stack is newly empty or newly non-empty, (2) leash change, (3) stopping.
+  uv_timer_t timer_; // If it goes off, trigger a timeout if the state is the same as when we started the timer.
+
+  /* Mutable fields. The TW thread and the Event Loop thread communicate through these since TW thread responds asynchronously. */
+  uv_mutex_t lock_; // Protects all this stuff.
+
+  /* BeforeHook, AfterHook */
+  int n_active_cbs_; /* Incremented in BeforeHook, decremented in AfterHook, for nested async stacks like Timer. */
+  uint64_t n_cbs_; /* Number of CBs we've begun. */
+  uint64_t last_seen_n_cbs_; /* Number of the CB observed by the TW when it last woke up. 0 means was not active then. */
+
+  /* Leash, Unleash. */
+  bool leashed_; // True if we shouldn't throw timeouts until Unleash.
+  bool throw_on_unleash_; /* If we observe a timeout while a Leash is active, and should throw on Unleash. */
+
+  /* ~LazyTimeoutWatchdog. */
+  bool stopping_; // Signal TW to clean up.
+  uv_sem_t stopped_; // TW posts when it receives the final Async
 };
 
 class SigintWatchdog {

@@ -573,6 +573,7 @@ void PreciseTimeoutWatchdog::Timer(uv_timer_t* timer) {
 	if (should_throw) {
 		/* No more reasons, so we'll throw. */
 		node_log(2, "PreciseTimeoutWatchdog::Timer: Throwing a timeout\n");
+    /* TODO Is there a tiny race window here with Event Loop calling Leash? */
 		w->isolate()->Timeout(); // TODO Is it safe to call Timeout if the previous Timeout interrupt has been handled but the Timeout it threw hasn't cleared yet? Need to modify V8-land? Will this ever happen with a "reasonable" timeout_ms_?
 	}
 
@@ -588,9 +589,194 @@ UNLOCK_AND_RETURN:
 LazyTimeoutWatchdog::LazyTimeoutWatchdog(v8::Isolate *isolate, uint64_t timeout_ms) 
   : TimeoutWatchdog(isolate, timeout_ms)
   {
+  int rc;
+
+	/* Initialize all the fields. */
+
+  loop_ = new uv_loop_t;
+  CHECK(loop_);
+  rc = uv_loop_init(loop_); // NB uv_loop_init doesn't initialize a worker pool. It's on the first time you uv_queue_work.
+  if (rc != 0) {
+    FatalError("node::PreciseTimeoutWatchdog::PreciseTimeoutWatchdog()",
+               "Failed to initialize uv loop.");
+  }
+
+  rc = uv_async_init(loop_, &async_, &LazyTimeoutWatchdog::Async);
+  CHECK_EQ(0, rc);
+
+  rc = uv_timer_init(loop_, &timer_);
+  CHECK_EQ(0, rc);
+
+	rc = uv_mutex_init(&lock_);
+	CHECK(rc == 0);
+
+  n_active_cbs_ = 0;
+  n_cbs_ = 0;
+  last_seen_n_cbs_ = 0; 
+
+	leashed_ = false;
+  throw_on_unleash_ = false;
+
+  stopping_ = false;
+	rc = uv_sem_init(&stopped_, 0);
+	CHECK(rc == 0);
+
+	/* Lastly, start the inhabiting TW thread. */
+  rc = uv_thread_create(&thread_, &LazyTimeoutWatchdog::Run, this);
+  CHECK_EQ(0, rc);
 }
 
 LazyTimeoutWatchdog::~LazyTimeoutWatchdog() {
+	/* Clean up the TW thread. */
+  node_log(2, "LazyTimeoutWatchdog::%s: Cleaning up TW thread\n", __func__);
+
+	// Signal TW thread that we're done.
+	uv_mutex_lock(&lock_);
+		node_log(2, "LazyTimeoutWatchdog::%s: Signaling TW thread\n", __func__);
+		stopping_ = true; 
+		_SignalWatchdog();
+	uv_mutex_unlock(&lock_);
+
+	node_log(2, "LazyTimeoutWatchdog::%s: Waiting for TW thread to down the semaphore\n", __func__);
+	uv_sem_wait(&stopped_);
+
+  node_log(2, "LazyTimeoutWatchdog::%s: Joining thread\n", __func__);
+  uv_thread_join(&thread_);
+
+  // UV_RUN_DEFAULT so that libuv has a chance to clean up.
+  node_log(2, "LazyTimeoutWatchdog::%s: Final uv_run for libuv cleanup\n", __func__);
+  uv_run(loop_, UV_RUN_DEFAULT);
+
+  int rc = uv_loop_close(loop_);
+  CHECK_EQ(0, rc);
+  delete loop_;
+  loop_ = nullptr;
+
+	uv_mutex_destroy(&lock_);
+}
+
+void LazyTimeoutWatchdog::BeforeHook (long async_id) {
+  uv_mutex_lock(&lock_);
+    n_active_cbs_++;
+    n_cbs_++;
+  uv_mutex_unlock(&lock_);
+}
+
+void LazyTimeoutWatchdog::AfterHook (long async_id) {
+  uv_mutex_lock(&lock_);
+    CHECK_GT(n_active_cbs_, 0);
+    n_active_cbs_--;
+  uv_mutex_unlock(&lock_);
+}
+
+uint64_t LazyTimeoutWatchdog::Leash (void) {
+  uv_mutex_lock(&lock_);
+    CHECK(!leashed_);
+    leashed_ = true;
+  uv_mutex_unlock(&lock_);
+
+  return timeout_ms(); /* Lazy. */
+}
+
+void LazyTimeoutWatchdog::Unleash (bool threw) {
+  uv_mutex_lock(&lock_);
+    CHECK(leashed_);
+    leashed_ = false;
+
+    if (!threw && throw_on_unleash_) {
+      node_log(2, "LazyTimeoutWatchdog::%s: The Leash-er did not throw, but our Timer expired. So we gave the Leash-er a too-generous timeout. Throwing a timeout now.\n", __func__);
+		  isolate()->Timeout();
+      throw_on_unleash_ = false;
+    }
+
+  uv_mutex_unlock(&lock_);
+}
+
+void LazyTimeoutWatchdog::Run (void *arg) {
+  LazyTimeoutWatchdog* w = static_cast<LazyTimeoutWatchdog*>(arg);
+
+  w->_StartTimer(w->timeout_ms());
+
+	node_log(2, "LazyTimeoutWatchdog::%s: Calling uv_run\n", __func__);
+  uv_run(w->loop_, UV_RUN_DEFAULT); // Run until we call uv_stop due to signal from PreciseTimeoutWatchdog::~PreciseTimeoutWatchdog.
+	node_log(2, "LazyTimeoutWatchdog::%s: returning\n", __func__);
+}
+
+void LazyTimeoutWatchdog::_SignalWatchdog() {
+  CHECK(stopping_);
+	uv_async_send(&async_);
+}
+
+void LazyTimeoutWatchdog::Async(uv_async_t* async) {
+  LazyTimeoutWatchdog *w = ContainerOf(&LazyTimeoutWatchdog::async_, async);
+
+  node_log(2, "LazyTimeoutWatchdog::%s: entry\n", __func__);
+
+	uv_mutex_lock(&w->lock_);
+    CHECK(w->stopping_);
+
+    /* Clean up. */
+    w->_StopTimer();
+		uv_close(reinterpret_cast<uv_handle_t*>(&w->async_), nullptr);
+		uv_close(reinterpret_cast<uv_handle_t*>(&w->timer_), nullptr);
+
+		uv_stop(w->loop_);
+
+		uv_sem_post(&w->stopped_);
+	uv_mutex_unlock(&w->lock_);
+}
+
+void LazyTimeoutWatchdog::Timer(uv_timer_t* timer) {
+  /* After Run(), we come here every timeout_ms(). */
+  node_log(2, "LazyTimeoutWatchdog::%s: entry\n", __func__);
+
+  LazyTimeoutWatchdog *w = ContainerOf(&LazyTimeoutWatchdog::timer_, timer);
+
+	uv_mutex_lock(&w->lock_);
+    /* On the first time through with an active CB, last_seen_n_cbs_ == 0 and 0 < n_cbs_ if there_is_an_active_cb, so we just take our n_cbs_ observation and start a new timer. */
+    bool there_is_an_active_cb = 0 < w->n_active_cbs_;
+    bool it_is_the_same = w->last_seen_n_cbs_ == w->n_cbs_;
+    if (there_is_an_active_cb && it_is_the_same) {
+      node_log(2, "LazyTimeoutWatchdog::%s: Timed out!\n", __func__);
+      if (w->leashed_) {
+        node_log(2, "LazyTimeoutWatchdog::%s: Timed out on the same CB, %lld, but leashed_ so deferring until Unleash\n", __func__, w->n_cbs_);
+        w->throw_on_unleash_ = true;
+      }
+      else {
+        node_log(2, "LazyTimeoutWatchdog::%s: We are not leashed, emitting a Timeout!\n", __func__);
+		    w->isolate()->Timeout(); // TODO Is it safe to call Timeout if the previous Timeout interrupt has been handled but the Timeout it threw hasn't cleared yet? Need to modify V8-land? Will this ever happen with a "reasonable" timeout_ms_?
+      }
+    }
+
+    /* Take observation of n_cbs_. */
+    w->last_seen_n_cbs_ = w->n_cbs_;
+	uv_mutex_unlock(&w->lock_);
+
+  /* Go back to sleep. */
+  w->_StartTimer(w->timeout_ms());
+
+  return;
+}
+
+void LazyTimeoutWatchdog::_StartTimer(uint64_t expiry_ms) {
+	uint64_t now_ms = NowMs();
+	node_log(2, "LazyTimeoutWatchdog::%s: entry at %lu, expiry_ms %lu\n", __func__, now_ms, expiry_ms);
+
+	_StopTimer(); // Make sure it's stopped. Now sure what happens if I start a started timer, but this is cheap since we only have one timer in our uv timer heap.
+	uint64_t repeat = 0; // Don't repeat; libuv's timers go off at timeout_ms_ intervals accounting for time shaving. We restart with full timeout ourselves.
+	int rc = uv_timer_start(&timer_, &LazyTimeoutWatchdog::Timer, expiry_ms, repeat);
+	CHECK_EQ(0, rc);
+
+	return;
+}
+
+void LazyTimeoutWatchdog::_StopTimer() {
+  int rc;
+
+	node_log(2, "LazyTimeoutWatchdog::%s: Stopping timer\n", __func__);
+
+	rc = uv_timer_stop(&timer_); // This is idempotent. If timer is not active, nothing happens.
+	CHECK(rc == 0);
 }
 
 SigintWatchdog::SigintWatchdog(
