@@ -1,0 +1,1 @@
+webtorrent/node_modules/tape/bin/tape tape test/*.js test/node/*.js
