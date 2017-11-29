@@ -1,0 +1,3 @@
+git clone https://github.com/webtorrent/webtorrent.git
+
+(cd webtorrent; npm install)

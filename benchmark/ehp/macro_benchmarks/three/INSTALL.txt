@@ -1,0 +1,7 @@
+git clone https://github.com/mrdoob/three.js.git
+
+cd three.js
+npm install
+
+node_modules/rollup/bin/rollup -c 
+node_modules/rollup/bin/rollup  -c test/rollup.unit.config.js 
