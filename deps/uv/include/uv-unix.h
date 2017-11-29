@@ -153,7 +153,7 @@ typedef struct uv__fs_buf_s uv__fs_buf_t;
 struct uv__fs_buf_s {
   /* Resources. Safe place to put these for reference on timeout. */
 	int resources_set; /* If this is set, these resources are valid. */
-	unsigned rph; /* If resources_set, always known. */
+	char rp[PATH_MAX]; /* If resources_set, always known. */
 	ino_t ino; /* If resources_set, always known. */
 	uv_file file; /* -1 means not known. */
 

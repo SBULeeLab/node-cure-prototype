@@ -101,11 +101,11 @@ static int uv__fs_close(uv_fs_t *req);
 /**
  * Timeout resource management policy:
  *
- * We manage four structures:
+ * We manage three structures:
  *  1. Slow Paths (we use a hash of the realpath())
  *  2. Slow FDs
- *  3. Slow Inodes
- *  4. Map of fds to {rph, inode} so we can blacklist based on fd on timeout.
+ *  3. Slow Inodes (NB if we are concerned about network drives, inode is not unique. Need to do device:inode).
+ *  4. Map of fds to {rp, inode} so we can blacklist based on fd on timeout.
  *  [5. Slow Devices] Not tracked, but could, defend against slow network mounts, policy decision.
  *
  * These tables are used as follows:
@@ -135,11 +135,10 @@ static int uv__fs_close(uv_fs_t *req);
 
  /* NB These struct field names are embedded in macros. Don't change them. */ 
 
-typedef struct slow_rph_s {
-  /* rph: realpath hash */
-  unsigned rph; /* Key. */
+typedef struct slow_rp_s {
+  char rp[PATH_MAX]; /* Key. Note that the remainder of the rp buf must be zero'd out for valid comparisons. */
   UT_hash_handle hh;
-} slow_rph_t;
+} slow_rp_t;
 
 typedef struct slow_fd_s {
   uv_file fd; /* Key. */
@@ -154,7 +153,7 @@ typedef struct slow_ino_s {
 typedef struct fd2resource_s {
   uv_file fd; /* Key. */
 
-	unsigned rph;
+	char rp[PATH_MAX];
   ino_t ino;
 
   UT_hash_handle hh;
@@ -162,8 +161,8 @@ typedef struct fd2resource_s {
 
 static uv_once_t slow_resources_init_once = UV_ONCE_INIT;
 
-static slow_rph_t *slow_rph_table = NULL; 
-static uv_mutex_t slow_rph_lock;
+static slow_rp_t *slow_rp_table = NULL; 
+static uv_mutex_t slow_rp_lock;
 
 static slow_fd_t *slow_fd_table = NULL; 
 static uv_mutex_t slow_fd_lock;
@@ -182,7 +181,7 @@ static void slow_resources_init (void) {
 		initialized = 1;
 
 	uv_log(2, "slow_resources_init: Initializing locks\n");
-	if (uv_mutex_init(&slow_rph_lock))
+	if (uv_mutex_init(&slow_rp_lock))
 		abort();
 	if (uv_mutex_init(&slow_fd_lock))
 		abort();
@@ -205,13 +204,13 @@ typedef enum {
 
 /* RPH */
 
-/* slow_rph_t* */
+/* slow_rp_t* */
 #define ADD_RPH(add)                                                          \
-    HASH_ADD(hh, slow_rph_table, rph, sizeof(unsigned), add)
+    HASH_ADD(hh, slow_rp_table, rp, sizeof(unsigned), add)
 
-/* unsigned* */
-#define FIND_RPH(rphP, out)                                                   \
-    HASH_FIND(hh, slow_rph_table, rphP, sizeof(unsigned), out)
+/* char* */
+#define FIND_RPH(rp, out)                                                   \
+    HASH_FIND(hh, slow_rp_table, rp, sizeof(char)*PATH_MAX, out)
 
 /* FD */
 #define ADD_FD(add)                                                           \
@@ -247,20 +246,20 @@ typedef enum {
 #define BEFORE_SLOW_RPH_TABLE       \
  do {                               \
 	 mark_not_cancelable();           \
-	 uv_mutex_lock(&slow_rph_lock);   \
+	 uv_mutex_lock(&slow_rp_lock);   \
  }                                  \
  while (0)
 
 #define AFTER_SLOW_RPH_TABLE        \
  do {                               \
-	 uv_mutex_unlock(&slow_rph_lock); \
+	 uv_mutex_unlock(&slow_rp_lock); \
 	 mark_cancelable();               \
  }                                  \
  while (0)
 
-static slow_rph_t * slow_rph_add (unsigned rph);
-static slow_rph_t * slow_rph_find (unsigned rph);
-static int rph_is_slow (unsigned rph);
+static slow_rp_t * slow_rp_add (char *rp);
+static slow_rp_t * slow_rp_find (char *rp);
+static int rp_is_slow (char *rp);
 
 #define BEFORE_SLOW_FD_TABLE        \
  do {                               \
@@ -313,46 +312,49 @@ static int ino_is_slow (ino_t ino);
  }                                          \
  while (0)
 
-static fd2resource_t * fd2resource_add (uv_file fd, ino_t ino, unsigned rph);
+static fd2resource_t * fd2resource_add (uv_file fd, ino_t ino, char *rp);
 static fd2resource_t * fd2resource_find (uv_file fd);
 static int fd2resource_known (uv_file fd);
 static void fd2resource_delete (uv_file fd);
 
-static slow_rph_t * slow_rph_add (unsigned rph) {
-  slow_rph_t *slow_rph = NULL;
+static slow_rp_t * slow_rp_add (char *rp) {
+  slow_rp_t *slow_rp = NULL;
 
-	uv_log(2, "slow_rph_add: rph %u\n", rph);
+	uv_log(2, "slow_rp_add: rp %u\n", rp);
 
-	if (rph_is_slow(rph))
+	if (rp_is_slow(rp))
 		return NULL;
 
-  slow_rph = (slow_rph_t *) uv__malloc(sizeof(*slow_rph));
-	if (slow_rph == NULL)
+  slow_rp = (slow_rp_t *) uv__malloc(sizeof(*slow_rp));
+	if (slow_rp == NULL)
 		abort();
-	slow_rph->rph = rph;
+  memset(slow_rp->rp, 0, sizeof(slow_rp->rp));
+  strncpy(slow_rp->rp, rp, sizeof(slow_rp->rp));
 
-  ADD_RPH(slow_rph);
+  ADD_RPH(slow_rp);
 
-	return slow_rph;
+	return slow_rp;
 }
 
-static slow_rph_t * slow_rph_find (unsigned rph) {
-  slow_rph_t *result;
+static slow_rp_t * slow_rp_find (char *rp) {
+  slow_rp_t *result = NULL;
 
-	uv_log(2, "slow_rph_find: rph %u\n", rph);
+	uv_log(2, "slow_rp_find: rp %s\n", rp);
 
-  FIND_RPH(&rph, result);
+  FIND_RPH(rp, result);
 
 	if (result == NULL)
-		uv_log(2, "slow_rph_find: rph %u was not slow yet\n", rph);
+		uv_log(2, "slow_rp_find: rp %s was not slow yet\n", rp);
   else
-		uv_log(2, "slow_rph_find: rph %u is already slow\n", rph);
+		uv_log(2, "slow_rp_find: rp %s is already slow\n", rp);
 
 	return result;
 }
 
-static int rph_is_slow (unsigned rph) {
-	return (slow_rph_find(rph) != NULL);
+static int rp_is_slow (char *rp) {
+  int is_slow = (slow_rp_find(rp) != NULL);
+  uv_log(2, "%s: %s is_slow %d\n", __func__, rp, is_slow);
+	return is_slow;
 }
 
 static slow_fd_t * slow_fd_add (uv_file fd) {
@@ -443,10 +445,10 @@ static int ino_is_slow (ino_t ino) {
 }
 
 
-static fd2resource_t * fd2resource_add (uv_file fd, ino_t ino, unsigned rph) {
+static fd2resource_t * fd2resource_add (uv_file fd, ino_t ino, char *rp) {
   fd2resource_t *fd2resource = NULL;
 
-  uv_log(2, "fd2resource_add: fd %d -> <ino %lu, rph %u>\n", fd, ino, rph);
+  uv_log(2, "fd2resource_add: fd %d -> <ino %lu, rp %s>\n", fd, ino, rp);
 
 	if (fd < 0)
 		abort();
@@ -459,7 +461,8 @@ static fd2resource_t * fd2resource_add (uv_file fd, ino_t ino, unsigned rph) {
 		abort();
 	fd2resource->fd = fd;
 	fd2resource->ino = ino;
-	fd2resource->rph = rph;
+  memset(fd2resource->rp, 0, sizeof(fd2resource->rp));
+  strncpy(fd2resource->rp, rp, sizeof(fd2resource->rp));
 
   ADD_FD2RESOURCE(fd2resource);
 
@@ -514,15 +517,6 @@ static void mark_cancelable (void) {
 }
 
 /* Interfaces for dealing with the resources used by a request. */
-static unsigned hash_buf (void *buf, size_t len) {
-	unsigned key_hash;
-	HASH_VALUE(buf, len, key_hash);
-	return key_hash;
-}
-
-static unsigned hash_str (char *str) {
-	return hash_buf(str, strlen(str));
-}
 
 /* These APIs interact with a single file using an fd. 
  *   uv_fs_sendfile can timeout on each end of the path
@@ -564,71 +558,72 @@ static void store_resources_in_timeout_buf (uv_fs_t *req) {
 	int rc;
   uv_stat_t statbuf;
 	ino_t ino = 0;
-	unsigned rph = 0;
+	char *rp = NULL;
 	uv_file file = -1;
 	int resources_known = 0;
 
-    void *reqptr_orig = req->ptr;
+  void *reqptr_orig = req->ptr;
 
   /* Should only happen once... */
   if (req->timeout_buf->resources_set)
 		abort();
 
 	if (req_has_fd(req)) {
-		fd2resource_t *fd2resource;
-		uv_log(2, "store_resources_in_timeout_buf: req %p has an fd so we can get info from fd2resources\n", req);
+		fd2resource_t *fd2resource = NULL;
+		uv_log(2, "%s: req %p has an fd so we can get info from fd2resources\n", __func__, req);
 
 		BEFORE_FD2RESOURCE_TABLE;
 			fd2resource = fd2resource_find(req->file);
 		AFTER_FD2RESOURCE_TABLE;
 		if (fd2resource == NULL) {
-            // the file was not found so we must have been passed an invalid file descriptor
-            // this operation should be done after fd2 resource table to mark ourselves back to cancelable.
-			goto CLEANUP_AND_RETURN;
-        }
+      /* The file was not found so we must have been passed an invalid file descriptor
+       * This operation should be done after fd2 resource table to mark ourselves back to cancelable. */
+      goto CLEANUP_AND_RETURN;
+    }
 
 		ino = fd2resource->ino;
-		rph = fd2resource->rph;
+		rp = fd2resource->rp;
 		file = req->file;
 		resources_known = 1;
+    uv_log(2, "%s: fd2resource has %d -> rp %s\n", __func__, req->file, rp);
 	}
 	else if (req_has_path(req)) {
-		/* If request uses a path, obtain the rph and inode number.
+		/* If request uses a path, obtain the rp and inode number.
 		 * Start with inode number because it doesn't risk an fd leak, and might even time out early for us! */
-		uv_log(2, "store_resources_in_timeout_buf: req %p has path %s\n", req, req->timeout_buf->path);
+		uv_log(2, "%s: req %p has path %s\n", __func__, req, req->timeout_buf->path);
+    statbuf.st_ino = 0;
 		rc = uv__fs_stat(req->timeout_buf->path, &statbuf);
 		if (rc < 0) {
-            uv_log(2, "store_resources_in_timeout_buf: uv__fs_stat failed: path %s rc %d: %d %s\n", req->timeout_buf->path, rc, errno, strerror(errno));
-			goto CLEANUP_AND_RETURN;
-        }
+      uv_log(2, "%s: uv__fs_stat failed: path %s rc %d: %d %s\n", __func__, req->timeout_buf->path, rc, errno, strerror(errno));
+      goto CLEANUP_AND_RETURN;
+    }
 		ino = statbuf.st_ino;
-		uv_log(2, "store_resources_in_timeout_buf: ino %lu\n", ino);
+		uv_log(2, "%s: ino %lu\n", __func__, ino);
 
-		/* First let's get the rph and inode number.
-		 * These can be done without risking an fd leak, and we expect stat cost to be a good predictor of open time.
-		 * Counterexample: open a fifo with O_RDONLY can hang. */
 		rc = uv__fs_realpath(req); /* WARNING Modifies req->ptr. */
-		if (rc != 0) {
-            uv_log(2, "store_resources_in_timeout_buf: uv__fs_realpath failed: path %s rc %d: %d %s\n", req->timeout_buf->path, rc, errno, strerror(errno));
-			goto CLEANUP_AND_RETURN;
-        }
-		rph = hash_str(req->ptr);
+    if (rc != 0) {
+      uv_log(2, "%s: uv__fs_realpath failed: path %s rc %d: %d %s\n", __func__, req->timeout_buf->path, rc, errno, strerror(errno));
+      goto CLEANUP_AND_RETURN;
+    }
+		rp = req->ptr;
 		resources_known = 1;
+    uv_log(2, "%s: realpath gave rp %s\n", __func__, rp);
 	}
 
 	/* Save these resource values in timeout_buf for reference on timeout. */
-	if (resources_known) {
-		mark_not_cancelable();
-			req->timeout_buf->rph = rph;
-			req->timeout_buf->ino = ino;
-			req->timeout_buf->file = file;
-			req->timeout_buf->resources_set = 1;
-		mark_cancelable();
-	}
+  if (resources_known) {
+    mark_not_cancelable();
+      memset(req->timeout_buf->rp, 0, sizeof(req->timeout_buf->rp));
+      strncpy(req->timeout_buf->rp, rp, sizeof(req->timeout_buf->rp));
+      req->timeout_buf->ino = ino;
+      req->timeout_buf->file = file;
+      req->timeout_buf->resources_set = 1;
+    mark_cancelable();
+  }
 
 CLEANUP_AND_RETURN:
-    req->ptr = reqptr_orig;
-	return;
+  req->ptr = reqptr_orig;
+  return;
 }
 
 /* POLICY DECISION: The resources of this req are slow. */
@@ -636,12 +631,12 @@ static void mark_resources_slow (uv_fs_t *req) {
 	mark_not_cancelable();
 
 	if (req->timeout_buf->resources_set) {
-		uv_log(2, "mark_resources_slow: req %p: rph %u ino %lu fd %d\n", req, req->timeout_buf->rph, req->timeout_buf->ino, req->timeout_buf->file);
+		uv_log(2, "mark_resources_slow: req %p: rp %s ino %lu fd %d\n", req, req->timeout_buf->rp, req->timeout_buf->ino, req->timeout_buf->file);
 		mark_not_cancelable();
 
-		uv_mutex_lock(&slow_rph_lock);
-		slow_rph_add(req->timeout_buf->rph);
-		uv_mutex_unlock(&slow_rph_lock);
+		uv_mutex_lock(&slow_rp_lock);
+		slow_rp_add(req->timeout_buf->rp);
+		uv_mutex_unlock(&slow_rp_lock);
 
 		uv_mutex_lock(&slow_ino_lock);
 		slow_ino_add(req->timeout_buf->ino);
@@ -669,12 +664,12 @@ static int are_resources_slow (uv_fs_t *req) {
 	mark_not_cancelable();
 
 	if (req->timeout_buf->resources_set) {
-		uv_mutex_lock(&slow_rph_lock);
-		if (rph_is_slow(req->timeout_buf->rph)) {
-			uv_log(2, "are_resources_slow: req %p rph %u is slow\n", req, req->timeout_buf->rph);
+		uv_mutex_lock(&slow_rp_lock);
+		if (rp_is_slow(req->timeout_buf->rp)) {
+			uv_log(2, "are_resources_slow: req %p rp %s is slow\n", req, req->timeout_buf->rp);
 			are_slow = 1;
 		}
-		uv_mutex_unlock(&slow_rph_lock);
+		uv_mutex_unlock(&slow_rp_lock);
 
 		uv_mutex_lock(&slow_ino_lock);
 		if (ino_is_slow(req->timeout_buf->ino)) {
@@ -712,7 +707,7 @@ static uv__fs_buf_t * uv__fs_buf_create (void) {
 		return NULL;
 	
 	buf->resources_set = 0;
-	buf->rph = 0;
+	buf->rp[0] = '\0';
 	buf->ino = 0;
 	buf->file = -1;
 	
@@ -1166,20 +1161,20 @@ static ssize_t uv__fs_open(uv_fs_t* req) {
 			mark_not_cancelable();
 				if (req->timeout_buf->ino == 0) {
 					uv_log(2, "uv__fs_open: created new file %s, looking up the resources\n", req->timeout_buf->path);
-					store_resources_in_timeout_buf(req); /* rph, ino */
+					store_resources_in_timeout_buf(req); /* rp, ino */
 				}
-                if (req->timeout_buf->resources_set) {
-                    /* Now we have enough to update the fd2resource table. */
-                    req->timeout_buf->file = r;
-                    uv_log(2, "uv__fs_open: %s, new fd2resource: %d -> <%lu, %u>\n", req->timeout_buf->path, req->timeout_buf->file, req->timeout_buf->ino, req->timeout_buf->rph);
+        if (req->timeout_buf->resources_set) {
+          /* Now we have enough to update the fd2resource table. */
+          req->timeout_buf->file = r;
+          uv_log(2, "uv__fs_open: %s, new fd2resource: %d -> <%lu, %s>\n", req->timeout_buf->path, req->timeout_buf->file, req->timeout_buf->ino, req->timeout_buf->rp);
 
-                    uv_mutex_lock(&fd2resource_lock);
-                    fd2resource_add(req->timeout_buf->file, req->timeout_buf->ino, req->timeout_buf->rph);
-                    uv_mutex_unlock(&fd2resource_lock);
-                }
-                else
-                    /* uv__fs_realpath gives ENOENT if you fclose(stdin) and then try to lookup /dev/stdin. Deep magic. */
-                    uv_log(2, "uv__fs_open: huh, open succeeded (%s, %d) but couldn't get resources. Oh well...\n", req->timeout_buf->path, r);
+          uv_mutex_lock(&fd2resource_lock);
+          fd2resource_add(req->timeout_buf->file, req->timeout_buf->ino, req->timeout_buf->rp);
+          uv_mutex_unlock(&fd2resource_lock);
+        }
+        else
+          /* uv__fs_realpath gives ENOENT if you fclose(stdin) and then try to lookup /dev/stdin. Deep magic. */
+          uv_log(2, "uv__fs_open: huh, open succeeded (%s, %d) but couldn't get resources. Oh well...\n", req->timeout_buf->path, r);
 			mark_cancelable();
 
       return r;
