@@ -36,7 +36,7 @@ function select(callback) {
         });
 }
 
-inquirer
+/*inquirer
     .prompt([
         {
             type: 'confirm',
@@ -102,6 +102,15 @@ inquirer
                 bench(opts, list);
             });
         } else {
+	    console.log(opts)
             bench(opts, BENCHMARKS);
         }
     });
+*/
+let opts={ "track": false,
+  "compare": false,
+  "all": true,
+  "connection": 100,
+  "pipelining": 10,
+  "duration": 30 }
+bench(opts, BENCHMARKS);
