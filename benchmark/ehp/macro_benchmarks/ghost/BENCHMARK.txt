@@ -1,0 +1,2 @@
+echo $(cd Ghost ; PATH="/home/ericrw96/Jamie/bm/benchmark/ehp/nodes/original_node/:$PATH" grunt test-integration)
+echo $(cd Ghost; PATH="/home/ericrw96/Jamie/bm/benchmark/ehp/nodes/watchdog_node/:$PATH" grunt test-integration)

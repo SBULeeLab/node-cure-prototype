@@ -1,0 +1,4 @@
+clone from https://github.com/TryGhost/Ghost.git
+
+
+echo $(cd Ghost ; npm install)
