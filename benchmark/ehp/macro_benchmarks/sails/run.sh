@@ -11,19 +11,19 @@ original_node=${2}
 echo "original node path is ${2}"
 
 
-for i in $(seq 1 10)
+for i in $(seq 1 1)
 do	
 	export NODECURE_TIMEOUT_WATCHDOG_TYPE=precise
 	echo $(./run_one.sh "${watchdog_node}") >> watchdog_precise.result
 done
 
-for i in $(seq 1 10)
+for i in $(seq 1 1)
 do	
 	export NODECURE_TIMEOUT_WATCHDOG_TYPE=lazy
 	echo $(./run_one.sh "${watchdog_node}") >> watchdog_lazy.result
 done
 
-for i in $(seq 1 10)
+for i in $(seq 1 1)
 do
 	echo $(./run_one.sh "${original_node}") >> original.result
 done
