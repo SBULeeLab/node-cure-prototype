@@ -18,7 +18,7 @@ def get_j(folder):
 		return json.loads(subprocess.check_output(['python', 'parse.py']))
 
 
-folders = ["acme_air"  ,"express",  "koa", "restify",  "three",  "webtorrent",  "ws"]
+folders = ["acme_air"  ,"express",  "koa", "restify",  "three",  "webtorrent",  "ws", "lokijs"]
 
 analyses = []
 for folder in folders:

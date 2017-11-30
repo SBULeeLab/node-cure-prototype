@@ -18,4 +18,7 @@ def print_result(test, result):
 import json,subprocess
 analyses = json.loads(subprocess.check_output(['python', 'make_analysis_json.py']))
 for analysis in analyses:
+	print("")
+	print("")
+	print("")
 	print_analysis(analysis)	
