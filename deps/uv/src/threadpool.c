@@ -476,15 +476,22 @@ static void uv__queue_done(struct uv__work* w, int err) {
 }
 
 static uint64_t uv__queue_timed_out(struct uv__work* w, void **dat) {
-	uint64_t ret;
+	uint64_t ret = 0;
   uv_work_t* req = container_of(w, uv_work_t, work_req);
 
 	if (!w->state_assigned) abort();
 	if (w->state_done) abort();
 
-  ret = req->timed_out_cb(req, dat); /* NOT INVOKED FROM MAIN THREAD. */
-	if (ret == 0)
-		w->state_timed_out = 1;
+  if (req->timed_out_cb == NULL) {
+    w->state_timed_out = 1;
+    ret = 0;
+  }
+  else {
+    ret = req->timed_out_cb(req, dat); /* NOT INVOKED FROM MAIN THREAD. */
+    if (ret == 0)
+      w->state_timed_out = 1;
+  }
+
 	return ret;
 }
 
