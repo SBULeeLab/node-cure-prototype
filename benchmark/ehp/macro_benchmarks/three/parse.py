@@ -6,5 +6,5 @@ def parse_time(line):
 
 tests = [(parse_time, 'real time')]
 		
-	
-print(analyze(tests, 'three')) 
+import json	
+print(json.dumps(analyze(tests, 'three'))) 

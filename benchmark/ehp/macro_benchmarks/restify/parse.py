@@ -11,5 +11,5 @@ def text_response(line):
 
 tests = [(json_response, 'response json'), (text_response, 'response text')]
 		
-	
-print(analyze(tests, 'restify')) 
+import json	
+print(json.dumps(analyze(tests, 'restify'))) 

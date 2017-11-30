@@ -6,5 +6,5 @@ def get_average(line):
 
 tests = [(get_average, 'ACME_AIR_REQS_SECOND_AFTER_10_MINUTES')]
 		
-	
-print(analyze(tests, 'ACME_AIR')) 
+import json	
+print(json.dumps(analyze(tests, 'ACME_AIR')))

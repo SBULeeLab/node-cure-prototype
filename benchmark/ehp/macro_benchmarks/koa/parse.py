@@ -8,4 +8,4 @@ def mw(line):
 tests = [(mw, '100 middleware')]
 		
 import json	
-print(json.dumps(analyze(tests, 'EXPRESS'))) 
+print(json.dumps(analyze(tests, 'KOA'))) 
