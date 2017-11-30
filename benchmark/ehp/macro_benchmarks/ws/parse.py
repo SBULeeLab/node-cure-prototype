@@ -7,7 +7,7 @@ def f(line, idx):
 	z = s.split('x')
 	if len(z) >= 2:
 		l.append(float(''.join(s.split('x')[-1].split(','))))
-	return (1/l[0]) * 1000, str(l[0])+"operations/second"
+	return (1/l[0]) * 1000, str(l[0]), "operations/second"
 
 def g(i,name):
 	return (partial(f,idx=i-1), name)

@@ -14,3 +14,4 @@ cd acmeair-driver
 timeout 600 apache-jmeter-3.3/bin/jmeter -DusePureIDs=true -n -t acmeair-jmeter/scripts/AcmeAir.jmx -j AcmeAir1.log -l AcmeAir1.jtl | grep summary
 
 kill ${pid}
+mongo acmeair --eval 'db.dropDatabase();' &> /dev/null

@@ -1,5 +1,5 @@
 def print_h():
-	print('TEST_NAME,NODE_TYPE,MEAN,VARIANCE,OVERHEAD,RESULTS')
+	print('TEST_NAME,NODE_TYPE,MEAN,VARIANCE,OVERHEAD,UNIT,RESULTS')
 def print_analysis(analysis):
 	print(analysis['name'])
 	print_h()
@@ -11,7 +11,7 @@ def print_test(test):
 		print_result(test, result)
 
 def print_result(test, result):
-	print(','.join([test['name'], str(result['file']), str(result['mean']), str(result['var']), str(result['overhead'])] + [str(x) for x in result['readable_results']]))
+	print(','.join([test['name'], str(result['file']), str(result['mean']), str(result['var']), str(result['overhead']), str(result['unit'])] + [str(x) for x in result['readable_results']]))
 
 
 

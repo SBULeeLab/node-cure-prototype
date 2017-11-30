@@ -7,28 +7,31 @@ def variance(numbers):
     for i in numbers:
         v += (average - i) ** 2
     return v / float(max(len(numbers),1))
-
 def get_reqs(f,f2):
 	rs = []
+	r2s = []
+	unit = 'UNKNOWN'
 	try:
 		with open(f) as fi:
 			for line in fi.readlines():
 				try:
-					r = f2(line)
+					r, r2, unit = f2(line)
 					rs.append(r)
+					r2s.append(r2)
 				except:
 					pass
 	except:
 		pass
-	return {'file': f, 'results':rs, 'mean': mean(rs), 'var': variance(rs)}
+	return {'file': f, 'results':rs, 'mean': '', 'var': '', 'readable_results': r2s, 'unit':unit}
 
 def get_result(test):
 	results = []
 	for f in files:
 		results.append(get_reqs(f, test))
-	orig_mean = float(results[-1]['mean'])
+	#orig_mean = float(results[-1]['mean'])
 	for r in results:
-		r['overhead'] = r['mean']/max(orig_mean, 0.0000000000000000001)
+		#r['overhead'] = r['mean']/max(orig_mean, 0.0000000000000000001)
+		r['overhead'] = ''
 	return results
 
 def analyze(tests, name):
