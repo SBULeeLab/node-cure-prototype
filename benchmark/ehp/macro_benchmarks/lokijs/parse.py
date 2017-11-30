@@ -4,7 +4,7 @@ def mw(line, idx):
 	last_line = line.split("ops/s")
 	l = float(last_line[idx].split('(')[-1].split(')')[0])
 	#print(last_line)
-	return (1/ l ) * 1000
+	return (1/ l ) * 1000, str(l) +"operations/second"
 
 def g(idx,name):
 	return (partial(mw, idx=idx), name)
