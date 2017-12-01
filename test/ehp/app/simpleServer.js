@@ -73,7 +73,8 @@ const handleRequest = (req, resp) => {
     for (var i = 0; i < 1000; i++); // Do some processing.
 
     _FS.readFile(f, (err, d) => { // ReadDoS
-        resp.end('The file you requested:' + d);
+        //resp.end('The file you requested:' + d);
+        resp.end('read finished');
         recordCompletedRequest();
     });
   }

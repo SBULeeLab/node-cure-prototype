@@ -28,29 +28,14 @@ print "Done\n";
 exit 0;
 
 sub runLegitimateClient {
-  my ($PORT, $reqPerHalfSec, $nSeconds) = @_;
+  my ($PORT, $nSeconds) = @_;
 
   my $nIter = 2*$nSeconds;
 
-  for (my $i = 0; $i < $nIter; $i++) {
-    print "$i: Legitimate clients\n";
-    print time . "\n";
-    my @before = gettimeofday;
+  print "Legitimate clients\n";
+  system("ab -n 99999999 -t 10 -c 80 'http://localhost:$PORT/\?fileToRead=/tmp/staticFile.txt' > /dev/null 2>&1");
 
-    `ab -n $reqPerHalfSec -c 80 "http://localhost:$PORT/\?fileToRead=/tmp/staticFile.txt" 2>&1`;
-
-    my @after = gettimeofday;
-    my $elapsed_s = tv_interval(\@before, \@after);
-    print "before <@before> after <@after> elapsed: $elapsed_s\n";
-    my $remainder = (0.5 - $elapsed_s);
-    print "remainder: $remainder\n";
-
-    if (0 < $remainder) {
-      my $remainder_us = $remainder * 1000000;
-      print "sleeping for $remainder_us\n";
-      usleep($remainder_us);
-    }
-  }
+  return;
 }
 
 sub runREDOSClient {
