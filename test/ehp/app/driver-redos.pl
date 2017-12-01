@@ -1,5 +1,7 @@
 #!/usr/bin/env perl
 
+my $NSEC = 20;
+
 use strict;
 use warnings;
 
@@ -13,7 +15,7 @@ if (not @ARGV) {
 my $PORT = $ARGV[0];
 
 print "Starting legitimate client on port $PORT\n";
-my $t1 = threads->create(\&runLegitimateClient, ($PORT, 10));
+my $t1 = threads->create(\&runLegitimateClient, ($PORT, $NSEC));
 
 print "Starting malicious client on port $PORT\n";
 my $t2 = threads->create(\&runMaliciousClient, ($PORT));
@@ -27,10 +29,8 @@ exit 0;
 sub runLegitimateClient {
   my ($PORT, $nSeconds) = @_;
 
-  my $nIter = 2*$nSeconds;
-
   print "Legitimate clients\n";
-  system("ab -n 99999999 -t 10 -c 80 'http://localhost:$PORT/\?fileToRead=/tmp/staticFile.txt' > /dev/null 2>&1");
+  system("ab -n 99999999 -t $nSeconds -c 80 'http://localhost:$PORT/\?fileToRead=/tmp/staticFile.txt' > /dev/null 2>&1");
 
   return;
 }
@@ -38,7 +38,7 @@ sub runLegitimateClient {
 sub runMaliciousClient {
   my ($PORT) = @_;
 
-  sleep 1;
+  sleep 5;
   print "Starting malicious client\n";
   my $url = "http://localhost:$PORT/?fileToRead=//////////////////////////////////////////////////\n";
   `wget '$url'`;

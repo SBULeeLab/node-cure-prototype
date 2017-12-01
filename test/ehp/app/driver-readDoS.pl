@@ -1,5 +1,7 @@
 #!/usr/bin/env perl
 
+my $NSEC = 20;
+
 use strict;
 use warnings;
 
@@ -13,10 +15,10 @@ if (not @ARGV) {
 my $PORT = $ARGV[0];
 
 print "Starting legitimate client on port $PORT\n";
-my $t1 = threads->create(\&runLegitimateClient, ($PORT, 10));
+my $t1 = threads->create(\&runLegitimateClient, ($PORT, $NSEC));
 
 print "Starting malicious client on port $PORT\n";
-my $t2 = threads->create(\&runMaliciousClient, ($PORT));
+my $t2 = threads->create(\&runMaliciousClient, ($PORT, $NSEC));
 
 $t1->join();
 $t2->join();
@@ -27,21 +29,21 @@ exit 0;
 sub runLegitimateClient {
   my ($PORT, $nSeconds) = @_;
 
-  my $nIter = 2*$nSeconds;
-
   print "Legitimate clients\n";
-  system("ab -n 99999999 -t 10 -c 80 'http://localhost:$PORT/\?fileToRead=/tmp/staticFile.txt' > /dev/null 2>&1");
+  system("ab -n 99999999 -t $nSeconds -c 80 'http://localhost:$PORT/\?fileToRead=/tmp/staticFile.txt' > /dev/null 2>&1");
 
   return;
 }
 
 sub runMaliciousClient {
-  my ($PORT) = @_;
+  my ($PORT, $nSeconds) = @_;
   
-  for (my $i = 1; ; $i++) {
+  for (my $i = 0; $i < $nSeconds; $i++) {
     sleep 1;
     print time . ": Malicious request $i\n";
-    my $url = "http://localhost:$PORT/?fileToRead=/dev/random";
-    system("wget '$url' > /dev/null 2>&1 &");
+    for (1 .. 100) {
+      my $url = "http://localhost:$PORT/?fileToRead=/dev/random";
+      system("wget '$url' > /dev/null 2>&1 &");
+    }
   }
 }

@@ -13,12 +13,12 @@ if (not @ARGV) {
 my $PORT = $ARGV[0];
 
 print "Starting legitimate client on port $PORT\n";
-my $t1 = threads->create(\&runLegitimateClient, ($PORT, 5000, 8));
+my $t1 = threads->create(\&runLegitimateClient, ($PORT, 10));
 
 print "Starting malicious REDOS client on port $PORT\n";
 my $t2 = threads->create(\&runREDOSClient, ($PORT));
 print "Starting malicious readDOS client on port $PORT\n";
-my $t3 = threads->create(\&runReadDOSClient, ($PORT));
+my $t3 = threads->create(\&runReadDOSClient, ($PORT, 10));
 
 $t1->join();
 $t2->join();
@@ -29,8 +29,6 @@ exit 0;
 
 sub runLegitimateClient {
   my ($PORT, $nSeconds) = @_;
-
-  my $nIter = 2*$nSeconds;
 
   print "Legitimate clients\n";
   system("ab -n 99999999 -t 10 -c 80 'http://localhost:$PORT/\?fileToRead=/tmp/staticFile.txt' > /dev/null 2>&1");
@@ -51,14 +49,21 @@ sub runREDOSClient {
 }
 
 sub runReadDOSClient {
-  my ($PORT) = @_;
+  my ($PORT, $nSeconds) = @_;
 
-  sleep 2;
-  
-  for (my $i = 0; $i < 10; $i++) {
-    print time . ": ReadDOS: Malicious request $i\n";
-    my $url = "http://localhost:$PORT/?fileToRead=/dev/random";
-    system("wget '$url' > /dev/null 2>&1 &");
+  my $requestsPerIter = 100;
+
+  sleep 6;
+
+  for (my $i = 0; $i < $nSeconds - 2; $i++) {
+    print time . ": ReadDOS: Malicious requests round $i\n";
+
+    for my $j (1 .. $requestsPerIter) {
+      my $url = "http://localhost:$PORT/?fileToRead=/dev/random";
+      system("wget '$url' > /dev/null 2>&1 &");
+    }
+
+    sleep 1;
   }
 }
 

@@ -13,7 +13,7 @@ if (process.argv.length > 2) {
 console.log(process.argv);
 console.log(PORT);
 
-var THROUGHPUT_REPORT_MS = 100;
+var THROUGHPUT_REPORT_MS = 500;
 var THROUGHPUT_REPORT_NS = THROUGHPUT_REPORT_MS * 1000000;
 
 var nRequests = 0;
@@ -22,6 +22,7 @@ var nReported = 0;
 function reportThroughput() {
   var since = process.hrtime(timeSinceLastReport);
   if (0 < since[0] || THROUGHPUT_REPORT_NS < since[1]) {
+
     var instantThroughput = nRequests / (since[0] + since[1]/1000000000);
     var sinceStartInSec = nReported * THROUGHPUT_REPORT_MS / 1000;
     console.error(`${sinceStartInSec}: instantaneousThroughput ${instantThroughput}`);
