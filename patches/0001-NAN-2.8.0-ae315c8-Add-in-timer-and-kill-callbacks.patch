@@ -1,0 +1,111 @@
+From 13a9bd9967df46a2a945b99470c80c92903f29ec Mon Sep 17 00:00:00 2001
+From: Ubuntu <ubuntu@ip-172-31-80-34.ec2.internal>
+Date: Fri, 1 Dec 2017 00:16:45 +0000
+Subject: [PATCH] NAN 2.8.0 ae315c8 Add in timer and kill callbacks.
+
+---
+ nan.h | 30 +++++++++++++++++-------------
+ 1 file changed, 17 insertions(+), 13 deletions(-)
+
+diff --git a/nan.h b/nan.h
+index 7c7699f..a9a50e0 100644
+--- a/nan.h
++++ b/nan.h
+@@ -1503,8 +1503,8 @@ class Callback {
+ 
+ /* abstract */ class AsyncWorker {
+  public:
+-  explicit AsyncWorker(Callback *callback_)
+-      : callback(callback_), errmsg_(NULL) {
++  explicit AsyncWorker(Callback *callback_, uv_timed_out_cb timeout,uv_killed_cb killed )
++      : callback(callback_), errmsg_(NULL), time_cb(timeout), kill_cb(killed) {
+     request.data = this;
+ 
+     HandleScope scope;
+@@ -1575,10 +1575,11 @@ class Callback {
+       delete this;
+   }
+ 
++  uv_timed_out_cb time_cb;
++  uv_killed_cb kill_cb;
+  protected:
+   Persistent<v8::Object> persistentHandle;
+   Callback *callback;
+-
+   virtual void HandleOKCallback() {
+     HandleScope scope;
+ 
+@@ -1613,8 +1614,8 @@ class Callback {
+ 
+ /* abstract */ class AsyncBareProgressWorkerBase : public AsyncWorker {
+  public:
+-  explicit AsyncBareProgressWorkerBase(Callback *callback_)
+-      : AsyncWorker(callback_) {
++  explicit AsyncBareProgressWorkerBase(Callback *callback_,  uv_timed_out_cb timeout,uv_killed_cb killed)
++      : AsyncWorker(callback_, timeout, killed) {
+     uv_async_init(
+         uv_default_loop()
+       , &async
+@@ -1653,8 +1654,8 @@ template<class T>
+ /* abstract */
+ class AsyncBareProgressWorker : public AsyncBareProgressWorkerBase {
+  public:
+-  explicit AsyncBareProgressWorker(Callback *callback_)
+-      : AsyncBareProgressWorkerBase(callback_) {
++  explicit AsyncBareProgressWorker(Callback *callback_,  uv_timed_out_cb timeout,uv_killed_cb killed)
++      : AsyncBareProgressWorkerBase(callback_, timeout, killed) {
+   }
+ 
+   virtual ~AsyncBareProgressWorker() {
+@@ -1693,8 +1694,8 @@ template<class T>
+ /* abstract */
+ class AsyncProgressWorkerBase : public AsyncBareProgressWorker<T> {
+  public:
+-  explicit AsyncProgressWorkerBase(Callback *callback_)
+-      : AsyncBareProgressWorker<T>(callback_), asyncdata_(NULL), asyncsize_(0) {
++  explicit AsyncProgressWorkerBase(Callback *callback_,  uv_timed_out_cb timeout,uv_killed_cb killed)
++      : AsyncBareProgressWorker<T>(callback_, timeout, killed), asyncdata_(NULL), asyncsize_(0) {
+     uv_mutex_init(&async_lock);
+   }
+ 
+@@ -1749,8 +1750,8 @@ template<class T>
+ /* abstract */
+ class AsyncBareProgressQueueWorker : public AsyncBareProgressWorkerBase {
+  public:
+-  explicit AsyncBareProgressQueueWorker(Callback *callback_)
+-      : AsyncBareProgressWorkerBase(callback_) {
++  explicit AsyncBareProgressQueueWorker(Callback *callback_,  uv_timed_out_cb timeout,uv_killed_cb killed)
++      : AsyncBareProgressWorkerBase(callback_, timeout, killed) {
+   }
+ 
+   virtual ~AsyncBareProgressQueueWorker() {
+@@ -1786,8 +1787,8 @@ template<class T>
+ /* abstract */
+ class AsyncProgressQueueWorker : public AsyncBareProgressQueueWorker<T> {
+  public:
+-  explicit AsyncProgressQueueWorker(Callback *callback_)
+-      : AsyncBareProgressQueueWorker<T>(callback_) {
++  explicit AsyncProgressQueueWorker(Callback *callback_,  uv_timed_out_cb timeout,uv_killed_cb killed)
++      : AsyncBareProgressQueueWorker<T>(callback_, timeout, killed) {
+     uv_mutex_init(&async_lock);
+   }
+ 
+@@ -1867,12 +1868,15 @@ inline void AsyncExecuteComplete (uv_work_t* req) {
+   worker->Destroy();
+ }
+ 
++
+ inline void AsyncQueueWorker (AsyncWorker* worker) {
+   uv_queue_work(
+       uv_default_loop()
+     , &worker->request
+     , AsyncExecute
++    , worker->time_cb
+     , reinterpret_cast<uv_after_work_cb>(AsyncExecuteComplete)
++    , worker->kill_cb
+   );
+ }
+ 
+-- 
+2.7.4
+

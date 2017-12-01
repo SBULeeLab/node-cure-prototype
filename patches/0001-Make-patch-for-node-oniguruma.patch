@@ -1,0 +1,135 @@
+From e8d312fd84cbac2c5268f8b1d4ab047e3867d5cb Mon Sep 17 00:00:00 2001
+From: Ubuntu <ubuntu@ip-172-31-80-34.ec2.internal>
+Date: Fri, 1 Dec 2017 00:11:58 +0000
+Subject: [PATCH] Make patch for node-oniguruma. To enable it to properly
+ recieve timeouts from node-cure. This patch is off commit
+ 4d2c67eb5619c2f5b0a.
+
+---
+ package.json               |  7 ++++++-
+ src/onig-scanner-worker.cc |  7 +++++++
+ src/onig-scanner-worker.h  |  7 +++++--
+ src/onig-scanner.cc        | 10 ++++++++--
+ src/onig-scanner.h         |  1 +
+ 5 files changed, 27 insertions(+), 5 deletions(-)
+
+diff --git a/package.json b/package.json
+index 7bf5437..dd2e779 100644
+--- a/package.json
++++ b/package.json
+@@ -29,7 +29,12 @@
+     "jasmine-focused": "~1.0.7"
+   },
+   "dependencies": {
+-    "nan": "^2.0.9"
++    "grunt": "^1.0.1",
++    "grunt-coffeelint": "0.0.16",
++    "grunt-contrib-coffee": "^2.0.0",
++    "grunt-shell": "^2.1.0",
++    "nan": "^2.0.9",
++    "node-cpplint": "^0.4.0"
+   },
+   "scripts": {
+     "test": "jasmine-focused --captureExceptions spec/",
+diff --git a/src/onig-scanner-worker.cc b/src/onig-scanner-worker.cc
+index ead8539..66585e6 100644
+--- a/src/onig-scanner-worker.cc
++++ b/src/onig-scanner-worker.cc
+@@ -1,10 +1,15 @@
+ #include "onig-scanner-worker.h"
++#include "stdio.h"
++
+ 
+ using ::v8::Array;
+ using ::v8::Number;
+ using ::v8::Value;
+ 
++extern volatile bool killed;
++
+ void OnigScannerWorker::Execute() {
++  killed = false;
+   bestResult = searcher->Search(source, charOffset);
+ }
+ 
+@@ -36,6 +41,8 @@ void OnigScannerWorker::HandleOKCallback() {
+     };
+     callback->Call(2, argv);
+   } else {
++	while (!killed){ /* busy loop hack*/}
++printf("FAILURE :-(\n");
+     Local<Value> argv[] = {
+       Nan::Null(),
+       Nan::Null()
+diff --git a/src/onig-scanner-worker.h b/src/onig-scanner-worker.h
+index 44f9996..1c08cae 100644
+--- a/src/onig-scanner-worker.h
++++ b/src/onig-scanner-worker.h
+@@ -13,11 +13,11 @@ using ::std::vector;
+ 
+ class OnigScannerWorker : public Nan::AsyncWorker {
+  public:
+-  OnigScannerWorker(Nan::Callback *callback,
++  OnigScannerWorker(Nan::Callback *callback,uv_timed_out_cb timedout, uv_killed_cb killed,
+                     vector<shared_ptr<OnigRegExp>> regExps,
+                     Local<String> v8String,
+                     int charOffset)
+-    : Nan::AsyncWorker(callback),
++    : Nan::AsyncWorker(callback, timedout, killed),
+       charOffset(charOffset) {
+         source = new OnigString(v8String);
+     searcher = shared_ptr<OnigSearcher>(new OnigSearcher(regExps));
+@@ -30,8 +30,11 @@ class OnigScannerWorker : public Nan::AsyncWorker {
+   void Execute();
+   void HandleOKCallback();
+ 
++  /* Correct signatures. */
++
+  private:
+   OnigString* source;
++  bool timed_out = false;
+   int charOffset;
+   shared_ptr<OnigSearcher> searcher;
+   shared_ptr<OnigResult> bestResult;
+diff --git a/src/onig-scanner.cc b/src/onig-scanner.cc
+index 5db6cc3..981e558 100644
+--- a/src/onig-scanner.cc
++++ b/src/onig-scanner.cc
+@@ -2,7 +2,13 @@
+ #include "onig-scanner-worker.h"
+ 
+ using ::v8::FunctionTemplate;
+-
++volatile bool killed = false;
++static uint64_t timeout_hack(uv_work_t* req, void **arg){
++	return 0;
++}
++static void killed_hack(void * arg){
++  killed = true;
++}
+ void OnigScanner::Init(Local<Object> target) {
+   Local<FunctionTemplate> tpl = Nan::New<FunctionTemplate>(OnigScanner::New);
+   tpl->SetClassName(Nan::New<String>("OnigScanner").ToLocalChecked());
+@@ -71,7 +77,7 @@ void OnigScanner::FindNextMatch(Local<String> v8String, Local<Number> v8StartLoc
+   int charOffset = v8StartLocation->Value();
+   Nan::Callback *callback = new Nan::Callback(v8Callback);
+ 
+-  OnigScannerWorker *worker = new OnigScannerWorker(callback, regExps, v8String, charOffset);
++  OnigScannerWorker *worker = new OnigScannerWorker(callback,timeout_hack, killed_hack, regExps, v8String, charOffset);
+   Nan::AsyncQueueWorker(worker);
+ }
+ 
+diff --git a/src/onig-scanner.h b/src/onig-scanner.h
+index 83d9fcf..b1be873 100644
+--- a/src/onig-scanner.h
++++ b/src/onig-scanner.h
+@@ -27,6 +27,7 @@ class OnigScanner : public node::ObjectWrap {
+   static NAN_METHOD(FindNextMatch);
+   static NAN_METHOD(FindNextMatchSync);
+   explicit OnigScanner(Local<Array> sources);
++  bool killed_completed = false;
+   ~OnigScanner();
+ 
+   void FindNextMatch(Local<String> v8String, Local<Number> v8StartLocation, Local<Function> v8Callback);
+-- 
+2.7.4
+
