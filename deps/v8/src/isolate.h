@@ -812,7 +812,7 @@ class Isolate {
   Object* TerminateExecution();
   void CancelTerminateExecution();
 
-  Object* Timeout();
+  Object* Timeout(); /* Returns nullptr if cowardly refuses to throw (no HandleScope). I think this basically means the cause of the timeout is no longer a problem, or perhaps that somebody entered a C++ add-on and did not define a HandleScope properly. Perhaps we should take the TerminateException route and throw a singleton? */
   bool IsTimedOut();
 
   void RequestInterrupt(InterruptCallback callback, void* data);

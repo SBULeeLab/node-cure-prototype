@@ -692,6 +692,16 @@ void LazyTimeoutWatchdog::Unleash (bool threw) {
   uv_mutex_unlock(&lock_);
 }
 
+bool LazyTimeoutWatchdog::TimeoutPending () {
+  bool pending;
+  uv_mutex_lock(&lock_);
+    CHECK(leashed_);
+    pending = timeout_pending_;
+  uv_mutex_unlock(&lock_);
+
+  return pending;
+}
+
 void LazyTimeoutWatchdog::Run (void *arg) {
   LazyTimeoutWatchdog* w = static_cast<LazyTimeoutWatchdog*>(arg);
 

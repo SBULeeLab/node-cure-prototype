@@ -954,7 +954,14 @@ Object* Isolate::StackOverflow() {
 
 Object* Isolate::Timeout() {
 	;//dprintf(2, "Isolate::Timeout: Throwing and returning a NewTimeoutError\n");
-	return Throw(*(factory()->NewTimeoutError(MessageTemplate::kTimeoutError)), nullptr);
+
+  HandleScopeData* current = handle_scope_data();
+  if (current->level == current->sealed_level) {
+    ;//dprintf(2, "Isolate::Timeout: Looks like there is no HandleScope, I refuse to emit this Timeout\n");
+    return NULL;
+  }
+  else
+    return Throw(*(factory()->NewTimeoutError(MessageTemplate::kTimeoutError)), nullptr);
 }
 
 Object* Isolate::TerminateExecution() {

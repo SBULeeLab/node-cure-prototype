@@ -118,6 +118,11 @@ class TimeoutWatchdog {
   virtual uint64_t Leash (void) = 0;
 
   /**
+   * For C++ bindings that do a lot of synchronous work while holding a Leash, to Unleash and return early.
+   */
+  virtual bool TimeoutPending () = 0;
+
+  /**
    * The C++ binding has returned. if(threw), it threw a timeout exception.
    * TW resumes the countdown as appropriate.
    */
@@ -153,6 +158,8 @@ class PreciseTimeoutWatchdog : public TimeoutWatchdog {
     void AfterHook (long async_id);
 
     uint64_t Leash (void);
+    /* A PreciseTimeoutWatchdog stops its timer while Leashed, so it does not know. */
+    bool TimeoutPending () { return false; };
     void Unleash (bool threw);
 
     /* TW thread APIs. */
@@ -243,6 +250,7 @@ class LazyTimeoutWatchdog : public TimeoutWatchdog {
   void AfterHook (long async_id);
 
   uint64_t Leash (void);
+  bool TimeoutPending ();
   void Unleash (bool threw);
 
   /* TW thread APIs. */
@@ -304,6 +312,7 @@ class LazyTimeoutWatchdog : public TimeoutWatchdog {
   /* Leash, Unleash. */
   bool leashed_; // True if we shouldn't throw timeouts until Unleash.
   bool throw_on_unleash_; /* If we observe a timeout while a Leash is active, and should throw on Unleash. */
+  bool timeout_pending_;
 
   /* ~LazyTimeoutWatchdog. */
   bool stopping_; // Signal TW to clean up.

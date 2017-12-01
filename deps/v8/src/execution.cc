@@ -484,7 +484,9 @@ Object* StackGuard::HandleInterrupts() {
 
 	if (CheckAndClearInterrupt(TIMEOUT)) {
 		;//dprintf(2, "StackGuard::HandleInterrupts: Timeout\n");
-    return isolate_->Timeout();
+    Object *res = isolate_->Timeout(); /* Might refuse to throw, needs a HandleScope. */
+    if (res != nullptr)
+      return res;
 	}
 
   if (CheckAndClearInterrupt(DEOPT_MARKED_ALLOCATION_SITES)) {

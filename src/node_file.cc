@@ -398,7 +398,7 @@ class fs_req_wrap {
 #define ASYNC_CALL(func, req, encoding, ...)                                  \
   ASYNC_DEST_CALL(func, req, nullptr, encoding, __VA_ARGS__)                  \
 
-/* On error, a SYNC_CALL ThrowUVException, and I made ThrowUVException timeout-aware.
+/* On error, a SYNC_CALL will ThrowUVException and return, and I made ThrowUVException timeout-aware.
  * Makes sense because the sync calls will throw things like EINVAL and EBADF already. */
 #define SYNC_DEST_CALL(func, path, dest, ...)                                 \
   fs_req_wrap req_wrap;                                                       \
@@ -944,7 +944,11 @@ static void ReadDir(const FunctionCallbackInfo<Value>& args) {
   if (callback->IsObject()) {
     ASYNC_CALL(scandir, callback, encoding, *path, 0 /*flags*/)
   } else {
+    //node_log(2, "ReadDir: Making SYNC_CALL for scandir\n"); fflush(stderr);
     SYNC_CALL(scandir, *path, *path, 0 /*flags*/)
+    //node_log(2, "ReadDir: SYNC_CALL scandir complete\n"); fflush(stderr);
+
+    (void) timeout_watchdog->Leash(); /* Doing a bunch of synchronous processing without a HandleScope. */
 
     CHECK_GE(SYNC_REQ.result, 0);
     int r;
@@ -954,13 +958,25 @@ static void ReadDir(const FunctionCallbackInfo<Value>& args) {
     size_t name_idx = 0;
 
     for (int i = 0; ; i++) {
+      if (timeout_watchdog->TimeoutPending()) {
+        //node_log(2, "ReadDir: Returning early B\n"); fflush(stderr);
+        timeout_watchdog->Unleash(false);
+        return;
+      }
+
       uv_dirent_t ent;
 
+      //node_log(2, "ReadDir: scandir_next\n"); fflush(stderr);
       r = uv_fs_scandir_next(&SYNC_REQ, &ent);
+      //node_log(2, "ReadDir: scandir complete\n"); fflush(stderr);
       if (r == UV_EOF)
         break;
-      if (r != 0)
+      if (r != 0) {
+        timeout_watchdog->Unleash(false);
         return env->ThrowUVException(r, "readdir", "", *path);
+      }
+
+      //node_log(2, "ReadDir: filename\n"); fflush(stderr);
 
       Local<Value> error;
       MaybeLocal<Value> filename = StringBytes::Encode(env->isolate(),
@@ -969,26 +985,38 @@ static void ReadDir(const FunctionCallbackInfo<Value>& args) {
                                                        &error);
       if (filename.IsEmpty()) {
         // TODO(addaleax): Use `error` itself here.
+        timeout_watchdog->Unleash(false);
         return env->ThrowUVException(UV_EINVAL,
                                      "readdir",
                                      "Invalid character encoding for filename",
                                      *path);
       }
 
+      //node_log(2, "ReadDir: setting name_v\n"); fflush(stderr);
       name_v[name_idx++] = filename.ToLocalChecked();
 
       if (name_idx >= arraysize(name_v)) {
+        //node_log(2, "ReadDir: name_v exceeded\n"); fflush(stderr);
         fn->Call(env->context(), names, name_idx, name_v)
             .ToLocalChecked();
         name_idx = 0;
       }
     }
 
+    if (timeout_watchdog->TimeoutPending()) {
+      //node_log(2, "ReadDir: Returning early C\n"); fflush(stderr);
+      timeout_watchdog->Unleash(false);
+      return;
+    }
+
     if (name_idx > 0) {
+      //node_log(2, "ReadDir: Calling fn with name_v\n"); fflush(stderr);
       fn->Call(env->context(), names, name_idx, name_v).ToLocalChecked();
     }
 
+    //node_log(2, "ReadDir: Setting names as return value\n"); fflush(stderr);
     args.GetReturnValue().Set(names);
+    timeout_watchdog->Unleash(false);
   }
 }
 
