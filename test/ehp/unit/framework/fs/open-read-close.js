@@ -1,3 +1,5 @@
+// NODECURE_THREADPOOL_TIMEOUT_MS=100 ../../../../../node open-read-close.js
+
 var fs = require('fs');
 
 fs.open('/tmp/pipe', fs.constants.O_RDWR, (err, fd) => {

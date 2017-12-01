@@ -3,23 +3,10 @@ Irrelevant FS APIs:
   copyFile, copyFileSync: not supported
   createReadStream, etc.: wrapper around lower-level calls
   exists, existsSync: deprecated
-
-Untested because "uninteresting":
-  fdatasync, fdatasyncSync
-  fsync, fsyncSync
-  futimes, futimesSync
-  lchmod, lchmodSync
-  lchown, lchownSync
-  link, linkSync
-  lstat lstatSync
-  mkdir, mkdirSync
-  mkdtemp, mkdtempSync
-  rename, renameSync
-  utimes, utimesSync
+  lchmod, lchmodSync: chmod already tested, code paths are the same except for the syscall
+  lchown, lchownSync: chown already tested, code paths are the same except for the syscall
+  lstat lstatSync: stat already tested, code paths are the same except for the syscall
+  mkdtemp, mkdtempSync: mkdir already tested, code paths are the same except for the syscall
 
 Untested because not in deps/uv/src/unix/fs.c:
   watch, watchFile
-
-Failures:
-  readdirSync: looks like scandir is even less cancelable than is documented, double free in libc?
-               run this again after we add cancel masking.

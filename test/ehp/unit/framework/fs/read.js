@@ -10,9 +10,8 @@ var fd = fs.openSync('/tmp/raw.dat', 'r');
 var bs = 10*1024*1024;
 var buf = Buffer.alloc(bs);
 
-fs.read(fd, buf, 0, bs, 0, (err, dat) => {
-	var bs = err ? -1 : dat.length;
+fs.read(fd, buf, 0, bs, 0, (err, bytesRead, buf) => {
   console.log('err:');
   console.log(err);
-  console.log('bs ' + bs);
+  console.log('bytesRead ' + bytesRead);
 });

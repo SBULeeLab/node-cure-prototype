@@ -1,6 +1,8 @@
 /* Needs a FIFO named '/tmp/pipe'.
  * $ mkfifo /tmp/pipe */
 
+// NODECURE_NODE_TIMEOUT_MS=100 ../../../../../node openSync.js
+
 var fs = require('fs');
 
 setTimeout(() => {
