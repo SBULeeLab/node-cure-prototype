@@ -79,14 +79,14 @@ static ssize_t uv__fs_fdatasync(uv_fs_t* req);
 static ssize_t uv__fs_fsync(uv_fs_t* req);
 static ssize_t uv__fs_futime(uv_fs_t* req);
 static ssize_t uv__fs_mkdtemp(uv_fs_t* req);
-static ssize_t uv__fs_open(uv_fs_t* req);
+static ssize_t uv__fs_open(uv_fs_t* req); /* Sort of AC-Unsafe, but could hang forever on a pipe. */
 static ssize_t uv__fs_read(uv_fs_t* req);
 static int uv__fs_scandir_filter(UV_CONST_DIRENT* dent);
 static int uv__fs_scandir_sort(UV_CONST_DIRENT** a, UV_CONST_DIRENT** b);
-static ssize_t uv__fs_scandir(uv_fs_t* req);
-static ssize_t uv__fs_pathmax_size(const char* path);
+static ssize_t uv__fs_scandir(uv_fs_t* req); /* AC-Unsafe. */
+static ssize_t uv__fs_pathmax_size(const char* path); /* pathconf is AC-Unsafe. */
 static ssize_t uv__fs_readlink(uv_fs_t* req);
-static ssize_t uv__fs_realpath(uv_fs_t* req);
+static ssize_t uv__fs_realpath(uv_fs_t* req); /* AC-Unsafe. */
 static ssize_t uv__fs_sendfile_emul(uv_fs_t* req);
 static ssize_t uv__fs_sendfile(uv_fs_t* req);
 static ssize_t uv__fs_utime(uv_fs_t* req);
@@ -95,7 +95,7 @@ static ssize_t uv__fs_copyfile(uv_fs_t* req);
 static int uv__fs_stat(const char *path, uv_stat_t *buf);
 static int uv__fs_lstat(const char *path, uv_stat_t *buf);
 static int uv__fs_fstat(int fd, uv_stat_t *buf);
-static int uv__fs_close(uv_fs_t *req);
+static int uv__fs_close(uv_fs_t *req); /* Sort of AC-Unsafe. */
 
 
 /**
@@ -716,7 +716,7 @@ static void uv__fs_buf_unref (uv__fs_buf_t *buf) {
 	return;
 }
 
-/* Return 0 on success. */
+/* Return 0 on success. Called on the Event Loop, no risk of cancellation, so uv__malloc is OK. */
 int uv__fs_buf_copy_io_bufs(uv__fs_buf_t *fs_buf, const uv_buf_t bufs[], unsigned int nbufs) {
 	unsigned int i = 0;
 	unsigned int nallocated = 0;
@@ -1199,8 +1199,11 @@ static ssize_t uv__fs_scandir(uv_fs_t* req) {
   int n;
 
   dents = NULL;
-  /* If we time this out, scandir itself might leak: fd, memory. */
-  n = scandir(req->timeout_buf->path, &dents, uv__fs_scandir_filter, uv__fs_scandir_sort);
+
+  /* AC-Unsafe. */
+	mark_not_cancelable();
+    n = scandir(req->timeout_buf->path, &dents, uv__fs_scandir_filter, uv__fs_scandir_sort);
+	mark_cancelable();
 
   /* NOTE: We will use nbufs as an index field */
   req->nbufs = 0;
@@ -1209,7 +1212,7 @@ static ssize_t uv__fs_scandir(uv_fs_t* req) {
     /* OS X still needs to deallocate some memory.
      * Memory was allocated using the system allocator, so use free() here.
      */
-    free(dents);
+    free(dents); // JD: OS X, we don't care
     dents = NULL;
   } else if (n == -1) {
     return n;
@@ -1224,7 +1227,9 @@ static ssize_t uv__fs_scandir(uv_fs_t* req) {
 static ssize_t uv__fs_pathmax_size(const char* path) {
   ssize_t pathmax;
 
-  pathmax = pathconf(path, _PC_PATH_MAX);
+  mark_not_cancelable(); /* pathconf is AC-Unsafe. */
+    pathmax = pathconf(path, _PC_PATH_MAX);
+  mark_cancelable();
 
   if (pathmax == -1) {
 #if defined(PATH_MAX)
@@ -1243,7 +1248,9 @@ static ssize_t uv__fs_readlink(uv_fs_t* req) {
   len = uv__fs_pathmax_size(req->timeout_buf->path);
 
   /* Allocate in timeout_buf so if we are interrupted during realpath we can free in uv_fs_req_cleanup. */
-  req->timeout_buf->tmp_path = uv__malloc(len + 1);
+  mark_not_cancelable(); /* malloc is AC-Unsafe. */
+    req->timeout_buf->tmp_path = uv__malloc(len + 1);
+  mark_cancelable();
   if (req->timeout_buf->tmp_path == NULL) {
     errno = ENOMEM;
     return -1;
@@ -1267,6 +1274,7 @@ static ssize_t uv__fs_readlink(uv_fs_t* req) {
 /* On success, req->ptr points to the realpath. */
 static ssize_t uv__fs_realpath(uv_fs_t* req) {
   ssize_t len;
+  char *ptr = NULL;
 
 	if (req->timeout_buf->resources_set) {
 		/* Surprise, we already know this because we looked it up in uv__fs_work via store_resources_in_timeout_buf. */
@@ -1279,14 +1287,20 @@ static ssize_t uv__fs_realpath(uv_fs_t* req) {
 		len = uv__fs_pathmax_size(req->timeout_buf->path);
 
 		/* Allocate in timeout_buf so if we are interrupted during realpath we can free in uv_fs_req_cleanup. */
-		req->timeout_buf->tmp_path = uv__malloc(len + 1);
+    mark_not_cancelable(); /* malloc is AC-Unsafe. */
+      req->timeout_buf->tmp_path = uv__malloc(len + 1);
+    mark_cancelable();
 		if (req->timeout_buf->tmp_path == NULL) {
 			errno = ENOMEM;
 			return -1;
 		}
 
-		/* If we time this out, realpath itself might leak: fd, memory. */
-		if (realpath(req->timeout_buf->path, req->timeout_buf->tmp_path) == NULL) {
+		/* AC-Unsafe. */
+    mark_not_cancelable();
+      ptr = realpath(req->timeout_buf->path, req->timeout_buf->tmp_path);
+    mark_cancelable();
+
+		if (ptr == NULL) {
 			uv_log(2, "uv__fs_realpath: realpath failed: %d %s\n", errno, uv_strerror(errno));
 			return -1;
 		}
