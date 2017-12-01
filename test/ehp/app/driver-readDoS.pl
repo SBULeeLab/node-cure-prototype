@@ -37,13 +37,15 @@ sub runLegitimateClient {
 
 sub runMaliciousClient {
   my ($PORT, $nSeconds) = @_;
+
+  sleep 5;
   
   for (my $i = 0; $i < $nSeconds; $i++) {
-    sleep 1;
     print time . ": Malicious request $i\n";
-    for (1 .. 100) {
+    for (1 .. 1) {
       my $url = "http://localhost:$PORT/?fileToRead=/dev/random";
       system("wget '$url' > /dev/null 2>&1 &");
     }
+    sleep 2;
   }
 }
