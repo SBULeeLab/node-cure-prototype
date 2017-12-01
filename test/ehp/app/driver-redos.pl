@@ -38,7 +38,7 @@ sub runLegitimateClient {
 sub runMaliciousClient {
   my ($PORT) = @_;
 
-  sleep 5;
+  sleep 3;
   print "Starting malicious client\n";
   my $url = "http://localhost:$PORT/?fileToRead=//////////////////////////////////////////////////\n";
   `wget '$url'`;
