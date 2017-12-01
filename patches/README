@@ -1,0 +1,5 @@
+These patches are to be applied to node-oniguruma (https://github.com/atom/node-oniguruma) and nan (https://github.com/nodejs/nan) to make them compatible with nodecure.
+
+The versions of the repositories are :
+	node-oniguruma 4d2c67e
+	nan ae315c8 v2.8.0
