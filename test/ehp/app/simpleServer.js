@@ -25,7 +25,8 @@ function reportThroughput() {
     var instantThroughput = nRequests / (since[0] + since[1]/1000000000);
     var sinceStartInSec = nReported * THROUGHPUT_REPORT_MS / 1000;
     console.error(`${sinceStartInSec}: instantaneousThroughput ${instantThroughput}`);
-    console.log(`${sinceStartInSec} ${instantThroughput}`);
+    //console.log(`${sinceStartInSec} ${instantThroughput}`);
+    console.log(`${instantThroughput}`);
     nReported++;
     nRequests = 0;
     timeSinceLastReport = process.hrtime();
