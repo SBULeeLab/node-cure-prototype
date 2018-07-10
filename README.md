@@ -26,7 +26,7 @@ The prototype cannot help with blocked code in a user-defined C++ binding.
 There are relatively few `npm` modules that fit this description. See section 6.3 of the paper for details.
 
 Our changes span V8, libuv, and the Node.js core libraries.
-We describe them at a high level in section 7 of the [paper](http://people.cs.vt.edu/~davisjam/downloads/publications/DavisWilliamsonLee-SenseOfTime-USENIXSecurity18.pdf).
+We describe them in section 5 of the [paper](http://people.cs.vt.edu/~davisjam/downloads/publications/DavisWilliamsonLee-SenseOfTime-USENIXSecurity18.pdf).
 For specific changes, consult `git log`.
 
 # How do I control the prototype's behavior?
